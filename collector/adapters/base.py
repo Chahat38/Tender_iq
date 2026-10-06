@@ -226,6 +226,7 @@ class SourceAdapter(ABC):
         since: datetime | None = None,
         *,
         enrich_details: bool = False,
+        enrich_limit: int | None = None,
     ) -> RunResult:
         """Fetch, normalize and (optionally) store all current listings.
 
@@ -236,6 +237,10 @@ class SourceAdapter(ABC):
         failures are isolated per listing: they are counted in
         ``detail_failures``/``errors`` and never abort the run or
         prevent the listing-level data from being stored.
+
+        ``enrich_limit`` caps how many detail pages are fetched per run
+        (e.g. for bounded demo/CI enrichment); listings beyond the cap
+        are still stored with listing-level data.
 
         Other errors are isolated per listing too: one bad listing is
         logged and counted in ``failed``/``errors`` without stopping the
@@ -258,6 +263,7 @@ class SourceAdapter(ABC):
             )
 
         enrich = enrich_details and self.supports_detail_enrichment()
+        detail_fetches = 0
         for raw in listings:
             result.found += 1
             try:
@@ -267,24 +273,26 @@ class SourceAdapter(ABC):
                     merged_urls = dict.fromkeys([*normalized.document_urls, *documents])
                     normalized.document_urls = list(merged_urls)
                 if enrich:
-                    try:
-                        detail = self.enrich_listing(raw)
-                        if detail is not None:
-                            merged = self.merge_listing_with_detail(normalized, detail)
-                            if self._detail_added_data(merged, normalized):
-                                result.enriched += 1
-                            normalized = merged
-                    except Exception as exc:  # noqa: BLE001 - isolated detail failure
-                        result.detail_failures += 1
-                        result.errors.append(
-                            f"{raw.external_id} detail: {exc!r}"
-                        )
-                        logger.warning(
-                            "detail enrichment failed for %s; keeping "
-                            "listing-level data",
-                            raw.external_id,
-                            exc_info=True,
-                        )
+                    if enrich_limit is None or detail_fetches < enrich_limit:
+                        detail_fetches += 1
+                        try:
+                            detail = self.enrich_listing(raw)
+                            if detail is not None:
+                                merged = self.merge_listing_with_detail(normalized, detail)
+                                if self._detail_added_data(merged, normalized):
+                                    result.enriched += 1
+                                normalized = merged
+                        except Exception as exc:  # noqa: BLE001 - isolated detail failure
+                            result.detail_failures += 1
+                            result.errors.append(
+                                f"{raw.external_id} detail: {exc!r}"
+                            )
+                            logger.warning(
+                                "detail enrichment failed for %s; keeping "
+                                "listing-level data",
+                                raw.external_id,
+                                exc_info=True,
+                            )
                 if storage is not None and source_id is not None:
                     status = storage.upsert_opportunity(
                         normalized, source_id, raw_content=raw.raw_html

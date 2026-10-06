@@ -75,6 +75,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "fields (procurement type, document links) before storing",
     )
     parser.add_argument(
+        "--enrich-limit",
+        type=int,
+        default=None,
+        help="maximum detail pages to fetch per run when --enrich-details "
+        "is set (default: no limit)",
+    )
+    parser.add_argument(
         "--adapter",
         choices=sorted(ADAPTERS),
         default="ppra_epms",
@@ -312,6 +319,7 @@ def main(argv: list[str] | None = None) -> int:
                 adapter,
                 args.adapter,
                 enrich_details=args.enrich_details,
+                enrich_limit=args.enrich_limit,
             )
         except ComplianceError as exc:
             # Loud, non-zero exit: a policy stop, not a transient error.

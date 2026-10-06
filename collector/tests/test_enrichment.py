@@ -249,6 +249,19 @@ class TestEnrichedRun:
         adapter.run(storage=storage)
         assert calls == []
 
+    def test_enrich_limit_caps_detail_page_fetches(
+        self, adapter, storage
+    ) -> None:
+        result = adapter.run(
+            storage=storage, enrich_details=True, enrich_limit=1
+        )
+        # exactly one detail attempt happened (success or failure), the
+        # cap prevented the rest of the 100-row listing from being fetched
+        assert result.enriched + result.detail_failures == 1
+        assert result.found >= 100
+        assert result.created == result.found
+        assert result.failed == 0
+
 
 class TestDetailEnrichmentParsing:
     def test_normalize_detail_matches_listing_for_fixture_ids(
