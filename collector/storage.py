@@ -11,12 +11,30 @@ Separation rules enforced here:
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from models import NormalizedOpportunity
+from storage_common import (
+    TRACKED_FIELDS as _TRACKED_FIELDS,
+    collect_changes,
+    db_value as _db_value,
+    filename_from_url as _filename_from_url,
+    utc_now_iso,
+)
+
+if TYPE_CHECKING:
+    from storage_postgres import PostgresStorage
+
+__all__ = [
+    "NULL_DEADLINE_FILTER",
+    "Storage",
+    "open_storage",
+    "utc_now_iso",
+]
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS sources (
@@ -28,7 +46,10 @@ CREATE TABLE IF NOT EXISTS sources (
     terms_checked INTEGER,
     requires_authentication INTEGER,
     crawl_frequency TEXT,
-    last_crawled_at TEXT
+    last_crawled_at TEXT,
+    base_url TEXT,
+    last_status TEXT,
+    consecutive_failures INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS opportunities (
@@ -40,9 +61,11 @@ CREATE TABLE IF NOT EXISTS opportunities (
     organization TEXT,
     description TEXT,
     source_url TEXT NOT NULL,
+    source_name TEXT,
     published_at TEXT,
     deadline TEXT,
     location TEXT,
+    province TEXT,
     category TEXT,
     procurement_type TEXT,
     content_hash TEXT NOT NULL,
@@ -51,6 +74,7 @@ CREATE TABLE IF NOT EXISTS opportunities (
     first_seen_at TEXT NOT NULL,
     last_seen_at TEXT NOT NULL,
     last_verified_at TEXT NOT NULL,
+    source_count INTEGER NOT NULL DEFAULT 1,
     raw_content TEXT,
     UNIQUE (source_id, external_id)
 );
@@ -60,7 +84,25 @@ CREATE TABLE IF NOT EXISTS opportunity_documents (
     opportunity_id INTEGER NOT NULL REFERENCES opportunities(id) ON DELETE CASCADE,
     url TEXT NOT NULL,
     filename TEXT,
+    content_hash TEXT,
+    storage_path TEXT,
+    mime_type TEXT,
+    byte_size INTEGER,
+    fetched_at TEXT,
+    extracted_text TEXT,
+    extracted_at TEXT,
     UNIQUE (opportunity_id, url)
+);
+
+CREATE TABLE IF NOT EXISTS opportunity_requirements (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    opportunity_id INTEGER NOT NULL REFERENCES opportunities(id) ON DELETE CASCADE,
+    label TEXT NOT NULL,
+    requirement TEXT,
+    is_mandatory INTEGER NOT NULL DEFAULT 0,
+    origin TEXT NOT NULL DEFAULT 'source',
+    created_at TEXT NOT NULL,
+    UNIQUE (opportunity_id, label)
 );
 
 CREATE TABLE IF NOT EXISTS opportunity_updates (
@@ -105,9 +147,178 @@ CREATE TABLE IF NOT EXISTS analysis_runs (
     prompt_version TEXT,
     duration_ms INTEGER,
     tokens INTEGER,
-    status TEXT,
+    status TEXT NOT NULL,
+    error_message TEXT,
+    user_id TEXT,
+    opportunity_id INTEGER REFERENCES opportunities(id) ON DELETE SET NULL,
     created_at TEXT NOT NULL
 );
+
+-- Deduplication review queue: uncertain duplicate pairs are parked here
+-- instead of being auto-merged (see collector/dedup.py).
+CREATE TABLE IF NOT EXISTS dedup_review_queue (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    opportunity_id_a INTEGER NOT NULL REFERENCES opportunities(id) ON DELETE CASCADE,
+    opportunity_id_b INTEGER NOT NULL REFERENCES opportunities(id) ON DELETE CASCADE,
+    score REAL NOT NULL,
+    reason TEXT,
+    status TEXT NOT NULL DEFAULT 'pending',
+    created_at TEXT NOT NULL,
+    resolved_at TEXT,
+    CHECK (opportunity_id_a < opportunity_id_b),
+    UNIQUE (opportunity_id_a, opportunity_id_b)
+);
+
+-- Operational alerts raised by the collector (e.g. 3 consecutive failed
+-- runs of a source). Separate from the per-user `alerts` table.
+CREATE TABLE IF NOT EXISTS operational_alerts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    source_id INTEGER REFERENCES sources(id) ON DELETE CASCADE,
+    alert_type TEXT NOT NULL,
+    severity TEXT NOT NULL DEFAULT 'error',
+    message TEXT NOT NULL,
+    consecutive_failures INTEGER,
+    channel TEXT NOT NULL DEFAULT 'internal',
+    created_at TEXT NOT NULL,
+    notified_at TEXT,
+    acknowledged_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS audit_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    occurred_at TEXT NOT NULL,
+    actor TEXT NOT NULL,
+    action TEXT NOT NULL,
+    entity_type TEXT,
+    entity_id TEXT,
+    details TEXT
+);
+
+-- ===== user-owned tables (mirrors the Supabase contract for offline
+-- ===== testing; production RLS lives in supabase/migrations) =====
+CREATE TABLE IF NOT EXISTS profiles (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL UNIQUE,
+    company_name TEXT,
+    plan TEXT NOT NULL DEFAULT 'free',
+    alert_threshold INTEGER NOT NULL DEFAULT 60,
+    contact_email TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS company_capabilities (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    name TEXT NOT NULL,
+    description TEXT,
+    keywords TEXT NOT NULL DEFAULT '[]',
+    created_at TEXT NOT NULL,
+    UNIQUE (user_id, name)
+);
+
+CREATE TABLE IF NOT EXISTS target_regions (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    province TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    UNIQUE (user_id, province)
+);
+
+CREATE TABLE IF NOT EXISTS target_categories (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    category TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    UNIQUE (user_id, category)
+);
+
+CREATE TABLE IF NOT EXISTS opportunity_matches (
+    id TEXT PRIMARY KEY,
+    opportunity_id INTEGER NOT NULL REFERENCES opportunities(id) ON DELETE CASCADE,
+    user_id TEXT NOT NULL,
+    relevance_score INTEGER NOT NULL CHECK (relevance_score BETWEEN 0 AND 100),
+    level TEXT NOT NULL CHECK (level IN ('HIGH', 'MEDIUM', 'LOW')),
+    reasons TEXT NOT NULL DEFAULT '[]',
+    prompt_version TEXT,
+    model TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE (opportunity_id, user_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_matches_user_score
+    ON opportunity_matches (user_id, relevance_score DESC);
+
+CREATE TABLE IF NOT EXISTS saved_opportunities (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    opportunity_id INTEGER NOT NULL REFERENCES opportunities(id) ON DELETE CASCADE,
+    created_at TEXT NOT NULL,
+    UNIQUE (user_id, opportunity_id)
+);
+
+CREATE TABLE IF NOT EXISTS alerts (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    opportunity_id INTEGER NOT NULL REFERENCES opportunities(id) ON DELETE CASCADE,
+    type TEXT NOT NULL CHECK (type IN
+        ('new_match', 'deadline_approaching', 'opportunity_updated', 'corrigendum')),
+    title TEXT NOT NULL,
+    body TEXT,
+    channel TEXT NOT NULL DEFAULT 'in_app',
+    created_at TEXT NOT NULL,
+    read_at TEXT,
+    UNIQUE (user_id, opportunity_id, type)
+);
+
+CREATE TABLE IF NOT EXISTS rfps (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    opportunity_id INTEGER REFERENCES opportunities(id) ON DELETE SET NULL,
+    title TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'draft'
+        CHECK (status IN ('draft', 'in_review', 'reviewed', 'exported')),
+    content TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS rfp_sections (
+    id TEXT PRIMARY KEY,
+    rfp_id TEXT NOT NULL REFERENCES rfps(id) ON DELETE CASCADE,
+    position INTEGER NOT NULL DEFAULT 0,
+    heading TEXT NOT NULL,
+    content TEXT,
+    created_at TEXT NOT NULL,
+    UNIQUE (rfp_id, heading)
+);
+
+CREATE TABLE IF NOT EXISTS subscriptions (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    plan TEXT NOT NULL DEFAULT 'free',
+    status TEXT NOT NULL DEFAULT 'active',
+    provider TEXT,
+    provider_ref TEXT,
+    current_period_start TEXT,
+    current_period_end TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS usage_counters (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    period TEXT NOT NULL,
+    feature TEXT NOT NULL,
+    count INTEGER NOT NULL DEFAULT 0,
+    updated_at TEXT NOT NULL,
+    UNIQUE (user_id, period, feature)
+);
+
+CREATE INDEX IF NOT EXISTS idx_opportunities_source_ref
+    ON opportunities (source_id, reference_number);
 
 CREATE INDEX IF NOT EXISTS idx_opportunities_deadline ON opportunities (deadline);
 CREATE INDEX IF NOT EXISTS idx_opportunities_source ON opportunities (source_id);
@@ -123,41 +334,34 @@ _API_RESULT_LIMIT_MAX = 500
 #: =null` (GET) onto it.
 NULL_DEADLINE_FILTER = object()
 
-#: Opportunity fields compared for change detection (source_url and the
-#: identity fields are deliberately excluded -- source_url is never
-#: overwritten, and GET-style date-window filters never drop undated
-#: rows unless asked to).
-_TRACKED_FIELDS = (
-    "title",
-    "organization",
-    "description",
-    "published_at",
-    "deadline",
-    "location",
-    "category",
-    "procurement_type",
-    "reference_number",
-)
-
-
-def utc_now_iso() -> str:
-    """Current UTC time as an ISO-8601 string."""
-    return datetime.now(timezone.utc).isoformat()
-
-
-def _db_value(value: Any) -> Any:
-    """Convert a normalized field value to its SQLite storage form."""
-    if isinstance(value, datetime):
-        return value.isoformat()
-    if isinstance(value, (list, tuple)):
-        return json.dumps(list(value))
-    return value
-
-
-def _filename_from_url(url: str) -> str | None:
-    """Best-effort filename extracted from a document URL."""
-    name = url.rstrip("/").rsplit("/", 1)[-1]
-    return name or None
+#: Columns added after the first schema shipped (applied to pre-existing
+#: databases with ALTER TABLE; new databases get them from _SCHEMA).
+_COLUMN_MIGRATIONS: dict[str, dict[str, str]] = {
+    "sources": {
+        "base_url": "TEXT",
+        "last_status": "TEXT",
+        "consecutive_failures": "INTEGER NOT NULL DEFAULT 0",
+    },
+    "opportunities": {
+        "source_name": "TEXT",
+        "province": "TEXT",
+        "source_count": "INTEGER NOT NULL DEFAULT 1",
+    },
+    "opportunity_documents": {
+        "content_hash": "TEXT",
+        "storage_path": "TEXT",
+        "mime_type": "TEXT",
+        "byte_size": "INTEGER",
+        "fetched_at": "TEXT",
+        "extracted_text": "TEXT",
+        "extracted_at": "TEXT",
+    },
+    "analysis_runs": {
+        "error_message": "TEXT",
+        "user_id": "TEXT",
+        "opportunity_id": "INTEGER",
+    },
+}
 
 
 class Storage:
@@ -194,7 +398,28 @@ class Storage:
     def _create_schema(self) -> None:
         """Create all tables and indexes if they do not exist."""
         self.conn.executescript(_SCHEMA)
+        self._ensure_columns()
         self.conn.commit()
+
+    def _ensure_columns(self) -> None:
+        """Add columns that shipped after the first schema version.
+
+        ``CREATE TABLE IF NOT EXISTS`` never alters an existing table, so
+        databases created before a column existed get it here (guarded by
+        PRAGMA table_info, hence idempotent).
+        """
+        for table, columns in _COLUMN_MIGRATIONS.items():
+            existing = {
+                row["name"]
+                for row in self.conn.execute(f"PRAGMA table_info({table})")
+            }
+            if not existing:
+                continue
+            for name, declaration in columns.items():
+                if name not in existing:
+                    self.conn.execute(
+                        f"ALTER TABLE {table} ADD COLUMN {name} {declaration}"
+                    )
 
     def close(self) -> None:
         """Close the database connection."""
@@ -257,11 +482,11 @@ class Storage:
                 """
                 INSERT INTO opportunities (
                     source_id, external_id, reference_number, title,
-                    organization, description, source_url, published_at,
-                    deadline, location, category, procurement_type,
-                    content_hash, first_seen_at, last_seen_at,
-                    last_verified_at, raw_content
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    organization, description, source_url, source_name,
+                    published_at, deadline, location, province, category,
+                    procurement_type, content_hash, first_seen_at,
+                    last_seen_at, last_verified_at, raw_content
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     source_id,
@@ -271,9 +496,11 @@ class Storage:
                     normalized.organization,
                     normalized.description,
                     normalized.source_url,
+                    normalized.source_name,
                     _db_value(normalized.published_at),
                     _db_value(normalized.deadline),
                     normalized.location,
+                    normalized.province,
                     normalized.category,
                     normalized.procurement_type,
                     new_hash,
@@ -333,25 +560,16 @@ class Storage:
     ) -> list[tuple[str, Any, Any]]:
         """Compare stored values against a normalized listing.
 
-        Returns ``(field, old_value, new_value)`` tuples for every
-        tracked field and for the document list that differs.
+        Delegates to :func:`storage_common.collect_changes` so the
+        SQLite and Postgres backends detect changes with identical
+        rules. Returns ``(field, old_value, new_value)`` tuples for
+        every tracked field and for the document list that differs.
         """
-        changes: list[tuple[str, Any, Any]] = []
-        for field_name in _TRACKED_FIELDS:
-            new_value = _db_value(getattr(normalized, field_name))
-            old_value = existing[field_name]
-            if old_value != new_value:
-                changes.append((field_name, old_value, new_value))
-        stored_docs = self._stored_document_urls(opportunity_id)
-        if stored_docs != normalized.document_urls:
-            changes.append(
-                (
-                    "document_urls",
-                    json.dumps(stored_docs),
-                    json.dumps(normalized.document_urls),
-                )
-            )
-        return changes
+        return collect_changes(
+            dict(existing),
+            self._stored_document_urls(opportunity_id),
+            normalized,
+        )
 
     def _stored_document_urls(self, opportunity_id: int) -> list[str]:
         """Return stored document URLs in insertion order."""
@@ -566,3 +784,28 @@ class Storage:
         )
         self.conn.commit()
         return int(cur.lastrowid)
+
+
+def open_storage(
+    db_path: str | Path | None = None,
+    *,
+    dsn: str | None = None,
+) -> "Storage | PostgresStorage":
+    """Open the storage backend selected by the environment.
+
+    When ``dsn`` is given, or the ``DATABASE_URL`` environment variable
+    is set, the collector writes to Postgres/Supabase through
+    :class:`storage_postgres.PostgresStorage`. Otherwise the SQLite
+    backend (:class:`Storage`) is used, which remains the default for
+    tests, offline runs and small self-hosted installs.
+
+    ``db_path`` is ignored when a DSN is in effect (kept so call sites
+    can pass their CLI value unconditionally).
+    """
+    dsn = dsn or os.environ.get("DATABASE_URL")
+    if dsn:
+        from storage_postgres import PostgresStorage
+
+        return PostgresStorage(dsn)
+    return Storage(db_path or os.environ.get("TENDERSCOUT_DB_PATH", "tenderscout.db"))
+
