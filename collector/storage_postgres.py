@@ -148,6 +148,102 @@ class PostgresStorage:
             rows = cur.fetchall()
         return [_serialise(row) for row in rows]
 
+    # ------------------------------------------------------------------
+    # deduplication
+    # ------------------------------------------------------------------
+
+    #: Columns dedup needs to score a candidate pair.
+    _DEDUP_PROJECTION = (
+        "id, source_id, reference_number, title, organization, deadline, "
+        "first_seen_at, duplicate_group_id, is_primary, source_count"
+    )
+
+    def list_ungrouped_opportunities(self) -> list[dict[str, Any]]:
+        """Return dedup-relevant columns for rows not yet in a group."""
+        with self.conn.cursor() as cur:
+            cur.execute(
+                f"SELECT {self._DEDUP_PROJECTION} FROM opportunities "
+                "WHERE duplicate_group_id IS NULL ORDER BY id"
+            )
+            rows = cur.fetchall()
+        return [_serialise(row) for row in rows]
+
+    def list_opportunities_in_group(self, group_id: str) -> list[dict[str, Any]]:
+        """Return every row belonging to a duplicate group, oldest first."""
+        with self.conn.cursor() as cur:
+            cur.execute(
+                f"SELECT {self._DEDUP_PROJECTION} FROM opportunities "
+                "WHERE duplicate_group_id = %s ORDER BY first_seen_at, id",
+                (group_id,),
+            )
+            rows = cur.fetchall()
+        return [_serialise(row) for row in rows]
+
+    def update_duplicate_state(
+        self,
+        opportunity_id: int,
+        *,
+        duplicate_group_id: str | None,
+        is_primary: bool,
+        source_count: int,
+    ) -> None:
+        """Write the three dedup columns for one row in a single update."""
+        with self.conn.cursor() as cur:
+            cur.execute(
+                "UPDATE opportunities SET duplicate_group_id = %s, "
+                "is_primary = %s, source_count = %s WHERE id = %s",
+                (duplicate_group_id, bool(is_primary), int(source_count), opportunity_id),
+            )
+        self.conn.commit()
+
+    def enqueue_dedup_review(
+        self,
+        opportunity_id_a: int,
+        opportunity_id_b: int,
+        score: float,
+        reason: str | None = None,
+    ) -> int:
+        """Queue one candidate pair for human review; 0 if already queued."""
+        low, high = sorted((opportunity_id_a, opportunity_id_b))
+        with self.conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO dedup_review_queue "
+                "(opportunity_id_a, opportunity_id_b, score, reason, status, created_at) "
+                "VALUES (%s, %s, %s, %s, 'pending', %s) "
+                "ON CONFLICT (opportunity_id_a, opportunity_id_b) DO NOTHING",
+                (low, high, score, reason, utc_now_iso()),
+            )
+            inserted = cur.rowcount
+        self.conn.commit()
+        return int(inserted or 0)
+
+    def list_dedup_reviews(self, status: str = "pending") -> list[dict[str, Any]]:
+        """Return dedup review rows for one status, oldest first."""
+        with self.conn.cursor() as cur:
+            cur.execute(
+                "SELECT * FROM dedup_review_queue WHERE status = %s "
+                "ORDER BY created_at, id",
+                (status,),
+            )
+            rows = cur.fetchall()
+        return [_serialise(row) for row in rows]
+
+    def resolve_dedup_review(
+        self, queue_id: int, status: str, *, resolved_at: str | None = None
+    ) -> None:
+        """Mark a review row resolved (``confirmed`` / ``rejected``)."""
+        with self.conn.cursor() as cur:
+            cur.execute(
+                "UPDATE dedup_review_queue SET status = %s, resolved_at = %s "
+                "WHERE id = %s",
+                (status, resolved_at or utc_now_iso(), queue_id),
+            )
+        self.conn.commit()
+
+    # ------------------------------------------------------------------
+    # sources (registry + runtime health) / operational alerts
+    # ------------------------------------------------------------------
+
     def register_source(
         self,
         name: str,

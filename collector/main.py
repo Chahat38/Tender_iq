@@ -39,6 +39,7 @@ from adapters.epads import EpadsAdapter  # noqa: E402
 from adapters.kppra import KppraActiveTendersAdapter  # noqa: E402
 from adapters.ppra_epms import PPRAEpmsAdapter  # noqa: E402
 from compliance import ComplianceError  # noqa: E402
+from dedup import run as run_dedup  # noqa: E402
 from ops import EXIT_COMPLIANCE, run_source  # noqa: E402
 from search import SearchIndex  # noqa: E402
 from storage import Storage, open_storage  # noqa: E402
@@ -99,9 +100,17 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="rebuild the FTS5 index from all stored opportunities and exit",
     )
+    parser.add_argument(
+        "--dedup-only",
+        action="store_true",
+        help="run cross-source duplicate detection on stored opportunities "
+        "and exit (also runs automatically after every collection)",
+    )
     args = parser.parse_args(argv)
     if args.search is not None and args.rebuild_index:
         parser.error("--search and --rebuild-index are mutually exclusive")
+    if args.dedup_only and (args.search is not None or args.rebuild_index):
+        parser.error("--dedup-only cannot be combined with --search/--rebuild-index")
     return args
 
 
@@ -155,6 +164,19 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     # ------------------- collection mode (Stage 1-3) --------------------
+    if args.dedup_only:
+        try:
+            report = run_dedup(storage)
+            print(
+                "Dedup:     "
+                f"examined {report['examined']}, "
+                f"candidates {report['candidate_pairs']}, "
+                f"merged {report['merged']}, queued {report['queued']}"
+            )
+            return 0
+        finally:
+            storage.close()
+
     try:
         adapter = ADAPTERS[args.adapter](offline=args.offline)
         try:
@@ -188,6 +210,13 @@ def main(argv: list[str] | None = None) -> int:
                 "  operational alert written: "
                 f"{outcome['ops']['alert']['message']}"
             )
+        dedup_report = run_dedup(storage)
+        print(
+            "Dedup:     "
+            f"examined {dedup_report['examined']}, "
+            f"merged {dedup_report['merged']}, "
+            f"queued {dedup_report['queued']}"
+        )
         _warn_if_index_out_of_sync(storage)
         return 0 if result.failed == 0 else 1
     finally:
