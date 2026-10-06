@@ -17,3 +17,6 @@ psycopg[binary]==3.2.3
 python-docx==1.1.2
 # Tender document text extraction (OCR stays an optional later step).
 pypdf==5.1.0
+# Postgres grammar check for supabase/migrations (CI validates the
+# migration with PostgreSQL's own parser before it ever reaches a server).
+pglast==8.5

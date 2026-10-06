@@ -59,6 +59,7 @@ class NormalizedOpportunity(BaseModel):
     published_at: datetime | None = None
     deadline: datetime | None = None
     location: str | None = None
+    province: str | None = None
     category: str | None = None
     procurement_type: str | None = None
     reference_number: str | None = None

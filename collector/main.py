@@ -37,7 +37,7 @@ if str(_SCRIPT_DIR) not in sys.path:
 
 from adapters.ppra_epms import PPRAEpmsAdapter  # noqa: E402
 from search import SearchIndex  # noqa: E402
-from storage import Storage, utc_now_iso  # noqa: E402
+from storage import Storage, open_storage, utc_now_iso  # noqa: E402
 
 #: Registry of available source adapters (one entry per source).
 ADAPTERS = {
@@ -118,10 +118,20 @@ def _print_search_results(index: SearchIndex, args: argparse.Namespace) -> None:
 def main(argv: list[str] | None = None) -> int:
     """Run in search mode or collection mode; see the module docstring."""
     args = parse_args(argv)
-    storage = Storage(args.db)
+    # Postgres when DATABASE_URL is set (production), SQLite otherwise
+    # (tests, offline runs, single-box installs).
+    storage = open_storage(args.db)
 
     # ----- search mode: query or rebuild the FTS5 index, then exit -----
     if args.search is not None or args.rebuild_index:
+        if not isinstance(storage, Storage):
+            print(
+                "error: --search/--rebuild-index run against the SQLite "
+                "database only (unset DATABASE_URL or pass --db)",
+                file=sys.stderr,
+            )
+            storage.close()
+            return 2
         try:
             index = SearchIndex(storage)
         except RuntimeError as exc:
@@ -159,7 +169,7 @@ def main(argv: list[str] | None = None) -> int:
         unchanged = result.found - result.created - result.updated - result.failed
         mode = "offline" if args.offline else "online"
         print(f"Source:    {adapter.source_name} ({mode})")
-        print(f"Database:  {storage.db_path}")
+        print(f"Database:  {getattr(storage, 'db_path', getattr(storage, 'dsn', '?'))}")
         print(f"Found:     {result.found}")
         print(f"Created:   {result.created}")
         print(f"Updated:   {result.updated}")
@@ -180,7 +190,11 @@ def _warn_if_index_out_of_sync(storage: Storage) -> None:
     """Print a hint when the search index does not cover every row.
 
     Advisory only: never lets an index problem fail a collection run.
+    The FTS5 index is a SQLite feature; runs against Postgres skip it
+    (Supabase serves search from its own GIN indexes).
     """
+    if not isinstance(storage, Storage):
+        return
     try:
         index = SearchIndex(storage)
         indexed = index.indexed_doc_count()
