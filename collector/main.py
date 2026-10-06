@@ -38,6 +38,7 @@ if str(_SCRIPT_DIR) not in sys.path:
 from adapters.epads import EpadsAdapter  # noqa: E402
 from adapters.kppra import KppraActiveTendersAdapter  # noqa: E402
 from adapters.ppra_epms import PPRAEpmsAdapter  # noqa: E402
+from ai import run_analysis, run_matching  # noqa: E402
 from compliance import ComplianceError  # noqa: E402
 from dedup import run as run_dedup  # noqa: E402
 from documents import DOCUMENTS_DIR, download_documents  # noqa: E402
@@ -130,17 +131,45 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="re-queue documents whose previous fetch attempt failed",
     )
+    parser.add_argument(
+        "--analyze-only",
+        action="store_true",
+        help="run the AI analysis pass on opportunities missing an "
+        "opportunity_ai row and exit (also runs after every collection)",
+    )
+    parser.add_argument(
+        "--match-user",
+        metavar="USER_ID",
+        default=None,
+        help="score opportunity_matches for one user and exit",
+    )
+    parser.add_argument(
+        "--match-limit",
+        type=int,
+        default=500,
+        help="maximum opportunities to score per --match-user run "
+        "(default: 500)",
+    )
     args = parser.parse_args(argv)
     if args.search is not None and args.rebuild_index:
         parser.error("--search and --rebuild-index are mutually exclusive")
-    exclusive = {"--dedup-only": args.dedup_only, "--documents": args.documents}
+    exclusive = {
+        "--dedup-only": args.dedup_only,
+        "--documents": args.documents,
+        "--analyze-only": args.analyze_only,
+        "--match-user": args.match_user is not None,
+    }
     if sum(bool(value) for value in exclusive.values()) > 1:
-        parser.error("--dedup-only and --documents are mutually exclusive")
-    if (args.dedup_only or args.documents) and (
+        parser.error(
+            "--dedup-only, --documents, --analyze-only and --match-user "
+            "are mutually exclusive"
+        )
+    if any(exclusive.values()) and (
         args.search is not None or args.rebuild_index
     ):
-        parser.error("--dedup-only/--documents cannot be combined with "
-                     "--search/--rebuild-index")
+        parser.error(
+            "standalone modes cannot be combined with --search/--rebuild-index"
+        )
     return args
 
 
@@ -212,6 +241,33 @@ def main(argv: list[str] | None = None) -> int:
         finally:
             storage.close()
 
+    # -------------------- AI stage (Stage 6) ---------------------------
+    if args.analyze_only:
+        try:
+            report = run_analysis(storage)
+            print(
+                "AI:        "
+                f"analyzed {report['analyzed']} "
+                f"(llm {report['llm']}, deterministic {report['deterministic']}, "
+                f"llm errors {report['failed']})"
+            )
+            return 0
+        finally:
+            storage.close()
+
+    if args.match_user is not None:
+        try:
+            report = run_matching(storage, args.match_user, limit=args.match_limit)
+            print(
+                "Matches:   "
+                f"scored {report['scored']} "
+                f"(high {report['high']}, medium {report['medium']}, "
+                f"low {report['low']}), analyzed {report['analyzed']}"
+            )
+            return 0
+        finally:
+            storage.close()
+
     # ------------------- collection mode (Stage 1-3) --------------------
     if args.dedup_only:
         try:
@@ -265,6 +321,12 @@ def main(argv: list[str] | None = None) -> int:
             f"examined {dedup_report['examined']}, "
             f"merged {dedup_report['merged']}, "
             f"queued {dedup_report['queued']}"
+        )
+        ai_report = run_analysis(storage)
+        print(
+            "AI:        "
+            f"analyzed {ai_report['analyzed']} "
+            f"(llm {ai_report['llm']}, deterministic {ai_report['deterministic']})"
         )
         _warn_if_index_out_of_sync(storage)
         return 0 if result.failed == 0 else 1

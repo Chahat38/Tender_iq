@@ -16,6 +16,7 @@ import sqlite3
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+from uuid import uuid4
 
 from models import NormalizedOpportunity
 from storage_common import (
@@ -826,6 +827,200 @@ class Storage:
         )
         self.conn.commit()
         return cursor.rowcount
+
+    # ------------------------------------------------------------------
+    # AI analysis + relevance matching (Stage 6)
+    # ------------------------------------------------------------------
+
+    def list_opportunities_needing_ai(self, limit: int = 500) -> list[dict[str, Any]]:
+        """Opportunity rows with no ``opportunity_ai`` analysis yet."""
+        rows = self.conn.execute(
+            "SELECT o.id, o.title, o.description, o.organization, "
+            "o.published_at, o.deadline, o.procurement_type, o.category, "
+            "o.location, o.province "
+            "FROM opportunities o LEFT JOIN opportunity_ai ai "
+            "ON ai.opportunity_id = o.id "
+            "WHERE ai.opportunity_id IS NULL ORDER BY o.id LIMIT ?",
+            (limit,),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def upsert_opportunity_ai(
+        self,
+        opportunity_id: int,
+        *,
+        category: str | None,
+        subcategory: str | None,
+        keywords: str,
+        procurement_type: str | None,
+        requirements: str,
+        date_conflicts: str,
+        prompt_version: str,
+        created_at: str,
+    ) -> None:
+        """Insert or replace the analysis of one opportunity."""
+        self.conn.execute(
+            "INSERT INTO opportunity_ai (opportunity_id, category, subcategory, "
+            "keywords, procurement_type, requirements, date_conflicts, "
+            "prompt_version, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT (opportunity_id) DO UPDATE SET "
+            "category = excluded.category, subcategory = excluded.subcategory, "
+            "keywords = excluded.keywords, "
+            "procurement_type = excluded.procurement_type, "
+            "requirements = excluded.requirements, "
+            "date_conflicts = excluded.date_conflicts, "
+            "prompt_version = excluded.prompt_version, "
+            "created_at = excluded.created_at",
+            (
+                opportunity_id, category, subcategory, keywords,
+                procurement_type, requirements, date_conflicts,
+                prompt_version, created_at,
+            ),
+        )
+        self.conn.commit()
+
+    def get_opportunity_ai(self, opportunity_id: int) -> dict[str, Any] | None:
+        """Return the analysis row for one opportunity, or None."""
+        row = self.conn.execute(
+            "SELECT * FROM opportunity_ai WHERE opportunity_id = ?",
+            (opportunity_id,),
+        ).fetchone()
+        return dict(row) if row is not None else None
+
+    def insert_analysis_run(
+        self,
+        task: str,
+        *,
+        status: str,
+        provider: str | None = None,
+        model: str | None = None,
+        prompt_version: str | None = None,
+        duration_ms: int | None = None,
+        tokens: int | None = None,
+        error_message: str | None = None,
+        user_id: str | None = None,
+        opportunity_id: int | None = None,
+        created_at: str,
+    ) -> int:
+        """Journal one analysis/LLM run; returns the new run id."""
+        cursor = self.conn.execute(
+            "INSERT INTO analysis_runs (task, provider, model, prompt_version, "
+            "duration_ms, tokens, status, error_message, user_id, "
+            "opportunity_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (task, provider, model, prompt_version, duration_ms, tokens, status,
+             error_message, user_id, opportunity_id, created_at),
+        )
+        self.conn.commit()
+        return int(cursor.lastrowid)
+
+    def list_analysis_runs(
+        self, *, task: str | None = None, limit: int = 50
+    ) -> list[dict[str, Any]]:
+        """Recent analysis runs, newest first (optionally one task)."""
+        if task is None:
+            rows = self.conn.execute(
+                "SELECT * FROM analysis_runs ORDER BY id DESC LIMIT ?", (limit,)
+            ).fetchall()
+        else:
+            rows = self.conn.execute(
+                "SELECT * FROM analysis_runs WHERE task = ? "
+                "ORDER BY id DESC LIMIT ?",
+                (task, limit),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def get_user_signals(self, user_id: str) -> dict[str, Any]:
+        """Everything the relevance scorer needs about one user."""
+        profile_row = self.conn.execute(
+            "SELECT * FROM profiles WHERE user_id = ?", (user_id,)
+        ).fetchone()
+        capabilities = [
+            dict(row)
+            for row in self.conn.execute(
+                "SELECT name, keywords FROM company_capabilities "
+                "WHERE user_id = ? ORDER BY name",
+                (user_id,),
+            ).fetchall()
+        ]
+        regions = [
+            str(row["province"])
+            for row in self.conn.execute(
+                "SELECT province FROM target_regions WHERE user_id = ? "
+                "ORDER BY province",
+                (user_id,),
+            ).fetchall()
+        ]
+        categories = [
+            str(row["category"])
+            for row in self.conn.execute(
+                "SELECT category FROM target_categories WHERE user_id = ? "
+                "ORDER BY category",
+                (user_id,),
+            ).fetchall()
+        ]
+        return {
+            "profile": dict(profile_row) if profile_row is not None else None,
+            "capabilities": capabilities,
+            "regions": regions,
+            "categories": categories,
+        }
+
+    def upsert_opportunity_match(
+        self,
+        opportunity_id: int,
+        user_id: str,
+        *,
+        relevance_score: int,
+        level: str,
+        reasons: str,
+        prompt_version: str,
+        model: str,
+        created_at: str,
+        updated_at: str,
+    ) -> None:
+        """Insert or update one (opportunity, user) match."""
+        self.conn.execute(
+            "INSERT INTO opportunity_matches (id, opportunity_id, user_id, "
+            "relevance_score, level, reasons, prompt_version, model, "
+            "created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT (opportunity_id, user_id) DO UPDATE SET "
+            "relevance_score = excluded.relevance_score, "
+            "level = excluded.level, reasons = excluded.reasons, "
+            "prompt_version = excluded.prompt_version, model = excluded.model, "
+            "updated_at = excluded.updated_at",
+            (
+                uuid4().hex, opportunity_id, user_id, relevance_score, level,
+                reasons, prompt_version, model, created_at, updated_at,
+            ),
+        )
+        self.conn.commit()
+
+    def list_matches(
+        self, user_id: str, *, min_score: int = 0, limit: int = 50
+    ) -> list[dict[str, Any]]:
+        """Best matches first for one user."""
+        rows = self.conn.execute(
+            "SELECT * FROM opportunity_matches "
+            "WHERE user_id = ? AND relevance_score >= ? "
+            "ORDER BY relevance_score DESC, updated_at DESC LIMIT ?",
+            (user_id, min_score, limit),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def list_opportunities_for_matching(
+        self, user_id: str, limit: int = 500
+    ) -> list[dict[str, Any]]:
+        """Rows with no match yet, or changed since the last match."""
+        rows = self.conn.execute(
+            "SELECT o.id, o.last_seen_at, m.updated_at AS matched_at "
+            "FROM opportunities o "
+            "LEFT JOIN opportunity_matches m "
+            "ON m.opportunity_id = o.id AND m.user_id = ? "
+            "WHERE m.id IS NULL OR m.updated_at < o.last_seen_at "
+            "ORDER BY o.id LIMIT ?",
+            (user_id, limit),
+        ).fetchall()
+        return [dict(row) for row in rows]
 
 
     def count_opportunities(
