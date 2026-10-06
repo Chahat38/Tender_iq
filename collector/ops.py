@@ -125,6 +125,7 @@ def run_source(
     *,
     since: Any = None,
     enrich_details: bool = False,
+    enrich_limit: int | None = None,
     notifier: Notifier | None = None,
     registry_spec: Any = None,
 ) -> dict[str, Any]:
@@ -151,7 +152,8 @@ def run_source(
     enforce_compliance(source_row)
 
     result = adapter.run(
-        storage=storage, since=since, enrich_details=enrich_details
+        storage=storage, since=since, enrich_details=enrich_details,
+        enrich_limit=enrich_limit,
     )
     finished_at = utc_now_iso()
     error_message = "; ".join(result.errors) or None

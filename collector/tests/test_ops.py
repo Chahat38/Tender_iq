@@ -36,7 +36,7 @@ class FakeAdapter:
         self.created = created
         self.calls = 0
 
-    def run(self, storage=None, since=None, enrich_details=False):
+    def run(self, storage=None, since=None, enrich_details=False, enrich_limit=None):
         self.calls += 1
         return RunResult(
             found=self.found,
