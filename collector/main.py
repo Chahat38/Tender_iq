@@ -40,6 +40,7 @@ from adapters.kppra import KppraActiveTendersAdapter  # noqa: E402
 from adapters.ppra_epms import PPRAEpmsAdapter  # noqa: E402
 from compliance import ComplianceError  # noqa: E402
 from dedup import run as run_dedup  # noqa: E402
+from documents import DOCUMENTS_DIR, download_documents  # noqa: E402
 from ops import EXIT_COMPLIANCE, run_source  # noqa: E402
 from search import SearchIndex  # noqa: E402
 from storage import Storage, open_storage  # noqa: E402
@@ -106,11 +107,40 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="run cross-source duplicate detection on stored opportunities "
         "and exit (also runs automatically after every collection)",
     )
+    parser.add_argument(
+        "--documents",
+        action="store_true",
+        help="download queued tender documents (content-addressed, "
+        "polite client) and exit",
+    )
+    parser.add_argument(
+        "--docs-limit",
+        type=int,
+        default=50,
+        help="maximum documents to fetch per --documents run (default: 50)",
+    )
+    parser.add_argument(
+        "--docs-dir",
+        default=os.environ.get("TENDERSCOUT_DOCUMENTS_DIR"),
+        help="where stored documents live (default: $TENDERSCOUT_DOCUMENTS_DIR "
+        "or var/documents)",
+    )
+    parser.add_argument(
+        "--docs-retry-failed",
+        action="store_true",
+        help="re-queue documents whose previous fetch attempt failed",
+    )
     args = parser.parse_args(argv)
     if args.search is not None and args.rebuild_index:
         parser.error("--search and --rebuild-index are mutually exclusive")
-    if args.dedup_only and (args.search is not None or args.rebuild_index):
-        parser.error("--dedup-only cannot be combined with --search/--rebuild-index")
+    exclusive = {"--dedup-only": args.dedup_only, "--documents": args.documents}
+    if sum(bool(value) for value in exclusive.values()) > 1:
+        parser.error("--dedup-only and --documents are mutually exclusive")
+    if (args.dedup_only or args.documents) and (
+        args.search is not None or args.rebuild_index
+    ):
+        parser.error("--dedup-only/--documents cannot be combined with "
+                     "--search/--rebuild-index")
     return args
 
 
@@ -162,6 +192,25 @@ def main(argv: list[str] | None = None) -> int:
         finally:
             storage.close()
         return 0
+
+    # ------------------- document pipeline (Stage 5) --------------------
+    if args.documents:
+        try:
+            report = download_documents(
+                storage,
+                documents_dir=args.docs_dir or DOCUMENTS_DIR,
+                limit=args.docs_limit,
+                retry_failed=args.docs_retry_failed,
+            )
+            print(
+                "Documents: "
+                f"downloaded {report['downloaded']}, "
+                f"extracted {report['extracted']}, "
+                f"failed {report['failed']}"
+            )
+            return 0
+        finally:
+            storage.close()
 
     # ------------------- collection mode (Stage 1-3) --------------------
     if args.dedup_only:

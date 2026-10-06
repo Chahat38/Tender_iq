@@ -560,6 +560,76 @@ class PostgresStorage:
             rows = cur.fetchall()
         return [_serialise(row) for row in rows]
 
+    # ------------------------------------------------------------------
+    # document pipeline (Stage 5)
+    # ------------------------------------------------------------------
+
+    def list_documents_needing_fetch(self, limit: int = 100) -> list[dict[str, Any]]:
+        """Return document rows never fetched (or never attempted)."""
+        with self.conn.cursor() as cur:
+            cur.execute(
+                "SELECT id, opportunity_id, url, filename FROM opportunity_documents "
+                "WHERE storage_path IS NULL AND fetched_at IS NULL "
+                "ORDER BY id LIMIT %s",
+                (limit,),
+            )
+            rows = cur.fetchall()
+        return [_serialise(row) for row in rows]
+
+    def mark_document_fetched(
+        self,
+        document_id: int,
+        *,
+        content_hash: str,
+        storage_path: str,
+        mime_type: str | None,
+        byte_size: int,
+        fetched_at: str,
+    ) -> None:
+        """Record a successful download of one document."""
+        with self.conn.cursor() as cur:
+            cur.execute(
+                "UPDATE opportunity_documents SET content_hash = %s, "
+                "storage_path = %s, mime_type = %s, byte_size = %s, "
+                "fetched_at = %s WHERE id = %s",
+                (content_hash, storage_path, mime_type, byte_size, fetched_at, document_id),
+            )
+        self.conn.commit()
+
+    def mark_document_failed(self, document_id: int, *, fetched_at: str) -> None:
+        """Mark one fetch attempt as done-but-empty (no stored content)."""
+        with self.conn.cursor() as cur:
+            cur.execute(
+                "UPDATE opportunity_documents SET fetched_at = %s "
+                "WHERE id = %s AND storage_path IS NULL",
+                (fetched_at, document_id),
+            )
+        self.conn.commit()
+
+    def mark_document_extracted(
+        self, document_id: int, *, extracted_text: str | None, extracted_at: str
+    ) -> None:
+        """Store extracted text (or None when extraction found nothing)."""
+        with self.conn.cursor() as cur:
+            cur.execute(
+                "UPDATE opportunity_documents SET extracted_text = %s, "
+                "extracted_at = %s WHERE id = %s",
+                (extracted_text, extracted_at, document_id),
+            )
+        self.conn.commit()
+
+    def clear_failed_document_fetches(self) -> int:
+        """Re-queue every attempted-but-failed document; returns count."""
+        with self.conn.cursor() as cur:
+            cur.execute(
+                "UPDATE opportunity_documents SET fetched_at = NULL "
+                "WHERE fetched_at IS NOT NULL AND storage_path IS NULL"
+            )
+            count = cur.rowcount
+        self.conn.commit()
+        return int(count)
+
+
     def count_opportunities(self) -> int:
         """Total number of stored opportunities."""
         with self.conn.cursor() as cur:

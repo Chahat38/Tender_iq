@@ -761,6 +761,73 @@ class Storage:
         ).fetchall()
         return [dict(row) for row in rows]
 
+    # ------------------------------------------------------------------
+    # document pipeline (Stage 5)
+    # ------------------------------------------------------------------
+
+    def list_documents_needing_fetch(self, limit: int = 100) -> list[dict[str, Any]]:
+        """Return document rows never fetched (or never attempted)."""
+        rows = self.conn.execute(
+            "SELECT id, opportunity_id, url, filename FROM opportunity_documents "
+            "WHERE storage_path IS NULL AND fetched_at IS NULL "
+            "ORDER BY id LIMIT ?",
+            (limit,),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def mark_document_fetched(
+        self,
+        document_id: int,
+        *,
+        content_hash: str,
+        storage_path: str,
+        mime_type: str | None,
+        byte_size: int,
+        fetched_at: str,
+    ) -> None:
+        """Record a successful download of one document."""
+        self.conn.execute(
+            "UPDATE opportunity_documents SET content_hash = ?, storage_path = ?, "
+            "mime_type = ?, byte_size = ?, fetched_at = ? WHERE id = ?",
+            (content_hash, storage_path, mime_type, byte_size, fetched_at, document_id),
+        )
+        self.conn.commit()
+
+    def mark_document_failed(self, document_id: int, *, fetched_at: str) -> None:
+        """Mark one fetch attempt as done-but-empty (no stored content).
+
+        The row keeps ``storage_path IS NULL`` so failures are visible,
+        but ``fetched_at`` set means it will not be auto-retried;
+        ``clear_failed_document_fetches`` puts it back in the queue.
+        """
+        self.conn.execute(
+            "UPDATE opportunity_documents SET fetched_at = ? "
+            "WHERE id = ? AND storage_path IS NULL",
+            (fetched_at, document_id),
+        )
+        self.conn.commit()
+
+    def mark_document_extracted(
+        self, document_id: int, *, extracted_text: str | None, extracted_at: str
+    ) -> None:
+        """Store extracted text (or None when extraction found nothing)."""
+        self.conn.execute(
+            "UPDATE opportunity_documents SET extracted_text = ?, extracted_at = ? "
+            "WHERE id = ?",
+            (extracted_text, extracted_at, document_id),
+        )
+        self.conn.commit()
+
+    def clear_failed_document_fetches(self) -> int:
+        """Re-queue every attempted-but-failed document; returns count."""
+        cursor = self.conn.execute(
+            "UPDATE opportunity_documents SET fetched_at = NULL "
+            "WHERE fetched_at IS NOT NULL AND storage_path IS NULL"
+        )
+        self.conn.commit()
+        return cursor.rowcount
+
+
     def count_opportunities(
         self,
         source_id: int | None = None,
