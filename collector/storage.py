@@ -877,6 +877,95 @@ class Storage:
         return [dict(row) for row in rows]
 
     # ------------------------------------------------------------------
+    # deduplication
+    # ------------------------------------------------------------------
+
+    #: Columns dedup needs to score a candidate pair.
+    _DEDUP_PROJECTION = (
+        "id, source_id, reference_number, title, organization, deadline, "
+        "first_seen_at, duplicate_group_id, is_primary, source_count"
+    )
+
+    def list_ungrouped_opportunities(self) -> list[dict[str, Any]]:
+        """Return dedup-relevant columns for rows not yet in a group.
+
+        Projection only: raw content and document lists stay out of the
+        dedup pass (they are irrelevant to matching and expensive).
+        """
+        rows = self.conn.execute(
+            f"SELECT {self._DEDUP_PROJECTION} FROM opportunities "
+            "WHERE duplicate_group_id IS NULL ORDER BY id"
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def list_opportunities_in_group(self, group_id: str) -> list[dict[str, Any]]:
+        """Return every row belonging to a duplicate group, oldest first."""
+        rows = self.conn.execute(
+            f"SELECT {self._DEDUP_PROJECTION} FROM opportunities "
+            "WHERE duplicate_group_id = ? ORDER BY first_seen_at, id",
+            (group_id,),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def update_duplicate_state(
+        self,
+        opportunity_id: int,
+        *,
+        duplicate_group_id: str | None,
+        is_primary: bool,
+        source_count: int,
+    ) -> None:
+        """Write the three dedup columns for one row in a single update."""
+        self.conn.execute(
+            "UPDATE opportunities SET duplicate_group_id = ?, is_primary = ?, "
+            "source_count = ? WHERE id = ?",
+            (duplicate_group_id, int(is_primary), source_count, opportunity_id),
+        )
+        self.conn.commit()
+
+    def enqueue_dedup_review(
+        self,
+        opportunity_id_a: int,
+        opportunity_id_b: int,
+        score: float,
+        reason: str | None = None,
+    ) -> int:
+        """Queue one candidate pair for human review; 0 if already queued.
+
+        The caller guarantees ``opportunity_id_a < opportunity_id_b``
+        (the table enforces it too); an already-known pair is left
+        untouched so repeated scans never duplicate queue rows.
+        """
+        low, high = sorted((opportunity_id_a, opportunity_id_b))
+        cur = self.conn.execute(
+            "INSERT OR IGNORE INTO dedup_review_queue "
+            "(opportunity_id_a, opportunity_id_b, score, reason, status, created_at) "
+            "VALUES (?, ?, ?, ?, 'pending', ?)",
+            (low, high, score, reason, utc_now_iso()),
+        )
+        self.conn.commit()
+        return int(cur.rowcount)
+
+    def list_dedup_reviews(self, status: str = "pending") -> list[dict[str, Any]]:
+        """Return dedup review rows for one status, oldest first."""
+        rows = self.conn.execute(
+            "SELECT * FROM dedup_review_queue WHERE status = ? "
+            "ORDER BY created_at, id",
+            (status,),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def resolve_dedup_review(
+        self, queue_id: int, status: str, *, resolved_at: str | None = None
+    ) -> None:
+        """Mark a review row resolved (``confirmed`` / ``rejected``)."""
+        self.conn.execute(
+            "UPDATE dedup_review_queue SET status = ?, resolved_at = ? WHERE id = ?",
+            (status, resolved_at or utc_now_iso(), queue_id),
+        )
+        self.conn.commit()
+
+    # ------------------------------------------------------------------
     # logs
     # ------------------------------------------------------------------
 
