@@ -36,8 +36,10 @@ if str(_SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(_SCRIPT_DIR))
 
 from adapters.ppra_epms import PPRAEpmsAdapter  # noqa: E402
+from compliance import ComplianceError  # noqa: E402
+from ops import EXIT_COMPLIANCE, run_source  # noqa: E402
 from search import SearchIndex  # noqa: E402
-from storage import Storage, open_storage, utc_now_iso  # noqa: E402
+from storage import Storage, open_storage  # noqa: E402
 
 #: Registry of available source adapters (one entry per source).
 ADAPTERS = {
@@ -149,23 +151,20 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     # ------------------- collection mode (Stage 1-3) --------------------
-    started_at = utc_now_iso()
     try:
         adapter = ADAPTERS[args.adapter](offline=args.offline)
-        result = adapter.run(storage=storage, enrich_details=args.enrich_details)
-        source_id = storage.get_or_create_source(
-            adapter.source_name, type(adapter).__name__
-        )
-        storage.log_fetch(
-            source_id,
-            started_at=started_at,
-            finished_at=utc_now_iso(),
-            found=result.found,
-            created=result.created,
-            updated=result.updated,
-            failed=result.failed,
-            error_message="; ".join(result.errors) or None,
-        )
+        try:
+            outcome = run_source(
+                storage,
+                adapter,
+                args.adapter,
+                enrich_details=args.enrich_details,
+            )
+        except ComplianceError as exc:
+            # Loud, non-zero exit: a policy stop, not a transient error.
+            print(str(exc), file=sys.stderr)
+            return EXIT_COMPLIANCE
+        result = outcome["result"]
         unchanged = result.found - result.created - result.updated - result.failed
         mode = "offline" if args.offline else "online"
         print(f"Source:    {adapter.source_name} ({mode})")
@@ -180,6 +179,11 @@ def main(argv: list[str] | None = None) -> int:
             print(f"Details failed: {result.detail_failures}")
         for error in result.errors:
             print(f"  error: {error}")
+        if outcome["ops"]["alert"] is not None:
+            print(
+                "  operational alert written: "
+                f"{outcome['ops']['alert']['message']}"
+            )
         _warn_if_index_out_of_sync(storage)
         return 0 if result.failed == 0 else 1
     finally:

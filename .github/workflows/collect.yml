@@ -1,12 +1,21 @@
-# Stage 4: scheduled collection workflow for TenderScout AI.
+# Scheduled collection workflow for TenderScout AI (per-source matrix).
 #
-# Runs the PPRA EPMS collector every 6 hours on GitHub's free
-# ubuntu-latest runners, and on demand via workflow_dispatch.
+# Every source adapter in collector/main.py ADAPTERS gets its own matrix
+# leg: one broken source fails (and is alerted on) without blocking the
+# others. Runs every 6 hours on GitHub's free ubuntu-latest runners, and
+# on demand via workflow_dispatch.
 #
 # Required repository secret:
 #   CONTACT_EMAIL - contact address used in the crawler User-Agent
 #                   (polite-crawling rule; the run refuses to start
 #                   without it).
+# Optional repository secrets:
+#   DATABASE_URL      - Supabase/Postgres DSN; when set the collector
+#                       writes to Postgres instead of the local SQLite
+#                       file (the API then reads Postgres too).
+#   SLACK_WEBHOOK_URL - where operational alerts (3 consecutive failed
+#                       runs) are delivered; without it alerts are only
+#                       logged and stored in operational_alerts.
 #
 # Note: scheduled workflows only fire from the repository's default
 # branch, and GitHub disables them automatically after 60 days of
@@ -25,7 +34,7 @@ on:
 permissions:
   contents: read
 
-# Never crawl the source with two overlapping runs (politeness rule):
+# Never crawl a source with two overlapping runs (politeness rule):
 # queue instead of cancel so a manual dispatch waits its turn.
 concurrency:
   group: collect
@@ -37,6 +46,14 @@ jobs:
     # Polite-crawl worst case (every page timing out + retries) is
     # roughly 45 minutes; 90 leaves comfortable headroom.
     timeout-minutes: 90
+
+    strategy:
+      # A failing source must NOT cancel the other sources' runs -
+      # each source stands or falls on its own.
+      fail-fast: false
+      matrix:
+        # Keep in sync with ADAPTERS in collector/main.py.
+        adapter: [ppra_epms]
 
     steps:
       - name: Check out repository
@@ -64,24 +81,51 @@ jobs:
           fi
           echo "CONTACT_EMAIL is configured."
 
-      - name: Run collector (PPRA EPMS)
+      # Compliance gate (fails loudly, exit 1): active + terms checked +
+      # no authentication + robots.txt allows. Records the robots verdict
+      # on the source row before anything is crawled.
+      - name: Compliance gate for ${{ matrix.adapter }}
         env:
           CONTACT_EMAIL: ${{ secrets.CONTACT_EMAIL }}
           TENDERSCOUT_DB_PATH: collector/tenderscout.db
+        run: python scripts/compliance_check.py --source "${{ matrix.adapter }}"
+
+      - name: Run collector (${{ matrix.adapter }})
+        id: collect
+        env:
+          CONTACT_EMAIL: ${{ secrets.CONTACT_EMAIL }}
+          TENDERSCOUT_DB_PATH: collector/tenderscout.db
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
         # --enrich-details fetches each tender's detail page (same polite
         # rate limits) so documents and procurement type are stored too;
         # detail failures are reported but never fail the listing run.
-        run: python collector/main.py --enrich-details
+        # Logs land in collector/logs/ and are always uploaded.
+        shell: bash
+        run: |
+          mkdir -p collector/logs
+          python collector/main.py --adapter "${{ matrix.adapter }}" --enrich-details \
+            2>&1 | tee "collector/logs/collect-${{ matrix.adapter }}-${{ github.run_id }}.log"
 
-      # On failure, keep the database (and any log files) as a run
-      # artifact so the failed run can be inspected after the runner
-      # is destroyed. Success does not upload anything.
-      - name: Upload database and logs on failure
+      # Keep every run's log as an artifact (success or failure) so a
+      # silently degraded source can be inspected after the runner is
+      # destroyed.
+      - name: Upload run logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: logs-${{ matrix.adapter }}-${{ github.run_id }}
+          path: collector/logs/*.log
+          if-no-files-found: warn
+
+      # On failure, keep the database too so the failed run can be
+      # inspected. Success does not upload it (the DB is either pushed
+      # to Supabase via DATABASE_URL or ephemeral).
+      - name: Upload database on failure
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: tenderscout-db-${{ github.run_id }}
+          name: tenderscout-db-${{ matrix.adapter }}-${{ github.run_id }}
           path: |
             collector/tenderscout.db
-            collector/*.log
           if-no-files-found: warn
