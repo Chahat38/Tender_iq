@@ -1,9 +1,19 @@
 requests==2.32.3
-beautifulsoup4==4.12.3
-lxml==5.3.0
+# bs4 4.13+/lxml 6.x: the old 4.12.3 + 5.3.0 pair emitted a
+# DeprecationWarning per BeautifulSoup() call (lxml's strip_cdata
+# option); the newer pair removes the noise (see pytest.ini).
+beautifulsoup4==4.15.0
+lxml==6.1.3
 pydantic==2.9.2
 python-dateutil==2.9.0.post0
 pytest==8.3.3
 fastapi==0.115.10
 uvicorn==0.34.0
 httpx==0.28.1
+# Postgres/Supabase storage backend (SQLite stays the default for
+# tests and offline runs; activated via DATABASE_URL).
+psycopg[binary]==3.2.3
+# RFP export (server-side DOCX generation).
+python-docx==1.1.2
+# Tender document text extraction (OCR stays an optional later step).
+pypdf==5.1.0
