@@ -35,6 +35,8 @@ _SCRIPT_DIR = Path(__file__).resolve().parent
 if str(_SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(_SCRIPT_DIR))
 
+from adapters.epads import EpadsAdapter  # noqa: E402
+from adapters.kppra import KppraActiveTendersAdapter  # noqa: E402
 from adapters.ppra_epms import PPRAEpmsAdapter  # noqa: E402
 from compliance import ComplianceError  # noqa: E402
 from ops import EXIT_COMPLIANCE, run_source  # noqa: E402
@@ -44,6 +46,8 @@ from storage import Storage, open_storage  # noqa: E402
 #: Registry of available source adapters (one entry per source).
 ADAPTERS = {
     "ppra_epms": PPRAEpmsAdapter,
+    "kppra_active_tenders": KppraActiveTendersAdapter,
+    "epads": EpadsAdapter,
 }
 
 

@@ -57,6 +57,34 @@ SOURCE_REGISTRY: dict[str, SourceSpec] = {
         requires_authentication=False,
         crawl_frequency="every 6h",
     ),
+    "kppra_active_tenders": SourceSpec(
+        key="kppra_active_tenders",
+        source_name="KPPRA Active Tenders",
+        base_url="http://kppra.gov.pk",
+        adapter_type="KppraActiveTendersAdapter",
+        active=True,
+        # Research 2026-10-06: public server-rendered listing at
+        # /kppra/activetenders.php, no login; robots.txt absent (404 ->
+        # no restrictions declared); no terms found forbidding polite
+        # automated access; per-tender search URL verified by hand.
+        terms_checked=True,
+        requires_authentication=False,
+        crawl_frequency="every 6h",
+    ),
+    "epads": SourceSpec(
+        key="epads",
+        source_name="EPADS",
+        base_url="https://epads.gov.pk",
+        adapter_type="EpadsAdapter",
+        active=True,
+        # Research 2026-10-06: public open-opportunities listing
+        # (server-rendered, no JS wall); robots.txt absent (404 -> no
+        # restrictions declared); site is the PPRA-run national portal
+        # with public pages and no stated anti-automation terms.
+        terms_checked=True,
+        requires_authentication=False,
+        crawl_frequency="every 6h",
+    ),
 }
 
 

@@ -41,8 +41,15 @@ BASE_URL = "https://epms.ppra.gov.pk"
 LISTING_PATH = "/public/tenders/active-tenders"
 DETAIL_PATH_TEMPLATE = "/public/tenders/tender-details/{external_id}"
 
-#: tender_type=1 selects "Tender Notice" in the site's own filter.
-DEFAULT_TENDER_TYPE = "1"
+#: tender_type values for the site's own filter, verified against the
+#: live portal's filter box (2026-10-06): 1 = Tender Notice,
+#: 2 = Pre-qualification (PQ), 3 = Request for Proposal (RFP),
+#: 4 = Expression of Interest (EOI). Online runs walk all four so PQ,
+#: RFP and EOI notices are collected too, not just tender notices.
+TENDER_TYPES = ("1", "2", "3", "4")
+
+#: The single type used when one is requested explicitly.
+DEFAULT_TENDER_TYPE = TENDER_TYPES[0]
 
 #: Listing fixtures (page snapshots) read in offline mode, sorted by name.
 OFFLINE_LISTING_GLOB = "ppra_listing*.html"
@@ -134,8 +141,12 @@ class PPRAEpmsAdapter(SourceAdapter):
     def fetch_listings(self, since: datetime | None = None) -> list[RawListing]:
         """Return the raw listing rows currently visible on the portal.
 
-        Offline mode reads every ``ppra_listing*.html`` fixture (page
-        order = filename sort order). Online mode walks the paginated
+        Offline mode reads every ``ppra_listing*.html`` fixture once
+        (page order = filename sort order); fixtures capture the
+        Tender Notice listing, so the type matrix only applies online.
+
+        Online mode walks every tender type (Tender Notice, PQ, RFP,
+        EOI - see :data:`TENDER_TYPES`) and, per type, the paginated
         listing until a page yields no rows.
 
         ``since`` is accepted but not applied: the public listing's
@@ -156,12 +167,13 @@ class PPRAEpmsAdapter(SourceAdapter):
             return listings
 
         listings = []
-        for page in range(1, self.MAX_LISTING_PAGES + 1):
-            html = self.get_html(self._listing_url(page))
-            rows = self._parse_listing_page(html)
-            if not rows:
-                break
-            listings.extend(rows)
+        for tender_type in TENDER_TYPES:
+            for page in range(1, self.MAX_LISTING_PAGES + 1):
+                html = self.get_html(self._listing_url(page, tender_type))
+                rows = self._parse_listing_page(html)
+                if not rows:
+                    break
+                listings.extend(rows)
         return listings
 
     def fetch_opportunity(self, ref: str) -> RawListing:
@@ -187,11 +199,11 @@ class PPRAEpmsAdapter(SourceAdapter):
     # listing-page parsing
     # ------------------------------------------------------------------
 
-    def _listing_url(self, page: int) -> str:
-        """Return the listing URL for one 1-based page number."""
+    def _listing_url(self, page: int, tender_type: str = DEFAULT_TENDER_TYPE) -> str:
+        """Return the listing URL for one 1-based page and tender type."""
         return (
             f"{self.base_url}{LISTING_PATH}"
-            f"?keyword=&tender_type={DEFAULT_TENDER_TYPE}&page={page}"
+            f"?keyword=&tender_type={tender_type}&page={page}"
         )
 
     def _parse_listing_page(self, html: str) -> list[RawListing]:
