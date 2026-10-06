@@ -1,0 +1,532 @@
+<!doctype html>
+<html class="no-js" lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="">
+    <title>Re-tender for Maintenance Store Items SZHL FY – 2026-27 - PPRA</title>
+    <link rel="icon" type="image/png" href="/public/assets/images/favicon.png">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+
+    <link rel="stylesheet" href="/public/assets/css/bootstrap.min.css">
+    <link rel="stylesheet" href="/public/assets/css/all.css">
+    <link rel="stylesheet" href="/assets/fonts/remixicon/remixicon.css" />
+    <link rel="stylesheet" href="/public/assets/css/style.css">
+    <link rel="stylesheet" href="/assets/css/custom.css" />
+
+</head>
+<style>
+    .detail-card {
+        background: white;
+        border-radius: 10px;
+        box-shadow: 0 5px 20px rgba(0, 0, 0, 0.08);
+        padding: 30px;
+        margin-bottom: 20px;
+    }
+
+    .detail-row {
+        display: flex;
+        padding: 12px 0;
+        border-bottom: 1px solid #f0f0f0;
+    }
+
+    .detail-row:last-child {
+        border-bottom: none;
+    }
+
+    .detail-label {
+        font-weight: 600;
+        color: #495057;
+        min-width: 200px;
+        flex-shrink: 0;
+    }
+
+    .detail-value {
+        color: #212529;
+        flex: 1;
+    }
+
+    .badge-corrigendum {
+        background: #ff6b6b;
+        color: white;
+        padding: 6px 12px;
+        border-radius: 4px;
+        font-size: 13px;
+    }
+
+    .badge-published {
+        background: #28a745;
+        color: white;
+        padding: 6px 12px;
+        border-radius: 4px;
+        font-size: 13px;
+    }
+
+    .download-btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 10px 20px;
+        background: #0066cc;
+        color: white;
+        border-radius: 6px;
+        text-decoration: none;
+        transition: all 0.3s ease;
+    }
+
+    .download-btn:hover {
+        background: #0052a3;
+        color: white;
+        transform: translateY(-2px);
+    }
+
+    .corrigendum-item {
+        background: #fff3cd;
+        border-left: 4px solid #ffc107;
+        padding: 15px;
+        margin-bottom: 15px;
+        border-radius: 4px;
+    }
+
+    .alert-closing-soon {
+        background: #fff3cd;
+        border-left: 4px solid #ffc107;
+        padding: 15px;
+        border-radius: 4px;
+    }
+
+    .alert-closed {
+        background: #f8d7da;
+        border-left: 4px solid #dc3545;
+        padding: 15px;
+        border-radius: 4px;
+    }
+
+    .section-title {
+        font-size: 20px;
+        font-weight: 700;
+        color: #212529;
+        margin-bottom: 20px;
+        padding-bottom: 10px;
+        border-bottom: 2px solid #005153;
+    }
+
+    .item-table {
+        width: 100%;
+        margin-top: 15px;
+    }
+
+    .item-table th {
+        background: #f8f9fa;
+        padding: 12px;
+        font-weight: 600;
+        border: 1px solid #dee2e6;
+    }
+
+    .item-table td {
+        padding: 10px 12px;
+        border: 1px solid #dee2e6;
+    }
+
+    @media print {
+        .no-print {
+            display: none !important;
+        }
+
+        .detail-card {
+            box-shadow: none;
+            border: 1px solid #ddd;
+        }
+    }
+</style>
+
+<body>
+
+    <div class="box-layout">
+
+
+                <!-- start header -->
+        <header class="position-sticky top-0 bg-white z-3">
+            <nav class="navbar navbar-expand-lg navbar-light sticky-top">
+                <div class="container container-wide">
+                    <a class="navbar-brand d-flex align-items-center gap-2" href="https://ppra.gov.pk/">
+                        <img src="/public/assets/images/ppra-logo.png" alt="PPRA Logo"
+                            style="width: 80px;height: auto !important;max-height: 80px;">
+                    </a>
+                    <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
+                        <span class="navbar-toggler-icon"></span>
+                    </button>
+                    <div class="collapse navbar-collapse" id="navbarNav">
+                        <ul class="navbar-nav ms-auto">
+                            <li class="nav-item"><a class="nav-link" href="https://ppra.gov.pk/">Home</a></li>
+                            <li class="nav-item dropdown">
+                                <a class="nav-link dropdown-toggle" href="#" role="button" data-bs-toggle="dropdown" aria-expanded="false">
+                                    Tenders 
+                                </a>
+                                <ul class="dropdown-menu">
+                                    <li class="nav-item"><a class="nav-link" href="/public/tenders/active-tenders">Active Tenders</a></li>
+                                    <li class="nav-item"><a class="nav-link" href="/public/tenders/tenders-history">Tenders History</a></li>
+                                </ul>
+                            </li>
+                            <!-- <li class="nav-item"><a class="nav-link" href="/public/tenders/active-tenders">Active Tenders</a></li>
+                            <li class="nav-item"><a class="nav-link" href="/public/tenders/tenders-history">Tenders History</a></li> -->
+                            <li class="nav-item"><a class="nav-link" href="/public/evaluations">Evaluation Results</a></li>
+                            <li class="nav-item"><a class="nav-link" href="/public/contracts">Contracts</a></li>
+                            <li class="nav-item"><a class="nav-link" href="/public/grievances">Grievances</a></li>
+                            <li class="nav-item"><a class="nav-link" href="/public/jobs/job-advertisements">job Advertisements</a></li>
+                            <li class="nav-item dropdown">
+                                <a class="nav-link dropdown-toggle" href="#" role="button" data-bs-toggle="dropdown" aria-expanded="false">
+                                    Blacklisted Firms
+                                </a>
+                                <ul class="dropdown-menu">
+                                    <li class="nav-item"><a class="nav-link" href="/public/active-blacklisted-firms">Active Black Listed Firms</a></li>
+                                    <li class="nav-item"><a class="nav-link" href="/public/active-de-listed-black-listed-firms">De-Listed Black Listed Firms</a></li>
+                                </ul>
+                            </li>
+                            <!-- <li class="nav-item"><a class="nav-link" href="/public/active-blacklisted-firms">Active Black Listed Firms</a></li>
+                            <li class="nav-item"><a class="nav-link" href="/public/active-de-listed-black-listed-firms">De-Listed Black Listed Firms</a></li> -->
+                        </ul>
+                    </div>
+                </div>
+            </nav>
+        </header>
+        <!-- end header -->
+        <!-- Page Title -->
+        <div class="container container-wide py-3">
+            <div class="hero position-relative">
+                <div class="row align-items-center flex-wrap">
+                    <div class="col-lg-12">
+                        <h1 class="text-captilize mt-2">Re-tender for Maintenance Store Items SZHL FY – 2026-27</h1>
+                        <p class="text-white">
+                            Tender No: <strong>TS0000015263E</strong>
+                        </p>
+                                                    <span class="badge-published position-absolute top-0 start-0">
+                                <i class="feather icon-feather-check-circle"></i> Published
+                            </span>
+                                            </div>
+                </div>
+            </div>
+            <div class="row mb-4">
+                <div class="col-12 no-print">
+                    <div class="d-flex gap-2 flex-wrap justify-content-end">
+                                                    <a href="/pdf?file=dGVuZGVyX2F0dGFjaG1lbnRzL0JpZGRpbmctRG9jdW1lbnRfb2ZfUmUtdGVuZGVyX2Zvcl9NYWludGVuYW5jZV9TdG9yZV9JdGVtc19TWkhMX0ZZXzIwMjYtMjctMjkwOTI2LnBkZg=="
+                                class="btn btn-primary btn-sm" target="_blank">
+                                <i class="feather icon-feather-download"></i>
+                                Download Tender Document
+                            </a>
+                        
+                                                    <a href="/pdf?file=YWR2ZXJ0aXNlbWVudF9kb2NzL0ludml0YXRpb25fdG9fQmlkXy1fUmUtdGVuZGVyX2Zvcl9NYWludGVuYW5jZV9TdG9yZV9JdGVtc19TWkhMX0ZZXzIwMjYtMjctMjkwOTI2LnBkZg=="
+                                class="btn btn-primary btn-sm" target="_blank">
+                                <i class="feather icon-feather-file-text"></i>
+                                Download Advertisement
+                            </a>
+                        
+                        <button onclick="window.print()" class="btn btn-danger btn-sm">
+                            <i class="feather icon-feather-printer"></i>
+                            Print Details
+                        </button>
+                        <a href="/public/tenders/active-tenders" class="btn btn-primary btn-sm">
+                            <i class="feather icon-feather-arrow-left"></i> Back to Listing
+                        </a>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Main Content -->
+        <main class="main pt-70px pb-70px">
+
+            <section class="p-0">
+                <div class="container container-wide">
+
+                    <!-- Alert for closing soon or closed -->
+                    
+                    
+                    <!-- Tender Header Card -->
+                    <!-- Organization Details -->
+                    <div class="detail-card">
+                        <div class="card-header">
+                            <h3 class="section-title">Organization/Office Details</h3>
+                        </div>
+
+                        <div class="card-body p-0">
+                            <ul class="list-group list-group-flush">
+                                <!-- Organization Name -->
+                                <li class="list-group-item d-flex flex-column flex-md-row align-items-start py-3">
+                                    <span class="mb-1 mb-md-0 me-md-3 detail-label">
+                                        Organization Name:
+                                    </span>
+                                    <span class="detail-value flex-grow-1">
+                                        Ministry of National Health Services, Regulation & Coordination                                    </span>
+                                </li>
+
+                                <!-- Office Name -->
+                                <li class="list-group-item d-flex flex-column flex-md-row align-items-start py-3">
+                                    <span class="mb-1 mb-md-0 me-md-3 detail-label">
+                                        Office Name:
+                                    </span>
+                                    <span class="detail-value flex-grow-1">
+                                        Shaikh Zayed Hospital (SZH)                                    </span>
+                                </li>
+
+                                <!-- Office Address -->
+                                <li class="list-group-item d-flex flex-column flex-md-row align-items-start py-3">
+                                    <span class="mb-1 mb-md-0 me-md-3 detail-label">
+                                        Office Address:
+                                    </span>
+                                    <span class="detail-value flex-grow-1">
+                                        Shaikh Zayed Hospital, Canal Bank Road, Lahore                                    </span>
+                                </li>
+
+                                <!-- City -->
+                                <li class="list-group-item d-flex flex-column flex-md-row align-items-start py-3">
+                                    <span class="mb-1 mb-md-0 me-md-3 detail-label">
+                                        City:
+                                    </span>
+                                    <span class="detail-value flex-grow-1">
+                                        Lahore                                    </span>
+                                </li>
+
+                                <!-- Contact Person (Conditional) -->
+                                                                    <li class="list-group-item d-flex flex-column flex-md-row align-items-start py-3">
+                                        <span class="mb-1 mb-md-0 me-md-3 detail-label">
+                                            Contact Person:
+                                        </span>
+                                        <span class="detail-value flex-grow-1">
+                                            Salman Bashir                                        </span>
+                                    </li>
+                                
+                                <!-- Contact Email (Conditional) -->
+                                                                    <li class="list-group-item d-flex flex-column flex-md-row align-items-start py-3">
+                                        <span class="mb-1 mb-md-0 me-md-3 detail-label">
+                                            Contact Email:
+                                        </span>
+                                        <span class="detail-value flex-grow-1">
+                                            <a href="mailto:dr.salmangondal@skzmdc.edu.pk" class="text-decoration-none">
+                                                dr.salmangondal@skzmdc.edu.pk                                            </a>
+                                        </span>
+                                    </li>
+                                
+                                <!-- Contact Phone (Conditional) -->
+                                                                    <li class="list-group-item d-flex flex-column flex-md-row align-items-start py-3">
+                                        <span class="mb-1 mb-md-0 me-md-3 detail-label">
+                                            Contact Phone:
+                                        </span>
+                                        <span class="detail-value flex-grow-1">
+                                            +92-423-586-5734                                        </span>
+                                    </li>
+                                                            </ul>
+                        </div>
+                    </div>
+
+                    <!-- Tender Information -->
+                    <div class="detail-card card shadow-sm border-0">
+                        <div class="card-body p-0">
+                            <h3 class="section-title">Tender Information</h3>
+
+                            <!-- Key Information in List Group -->
+                            <div class="list-group list-group-flush">
+                                <div class="list-group-item d-flex flex-column flex-md-row align-items-start p-3">
+                                    <span class="mb-1 mb-md-0 me-md-3 detail-label">
+                                        Tender Type
+                                    </span>
+                                    <span class="flex-grow-1">Tender Notice</span>
+                                </div>
+
+                                <div class="list-group-item d-flex flex-column flex-md-row align-items-start p-3">
+                                    <span class="mb-1 mb-md-0 me-md-3 detail-label">
+                                        Tender No / Reference No / Tender Inquiry No
+                                    </span>
+                                    <span class="flex-grow-1">P89833</span>
+                                </div>
+
+                                <div class="list-group-item d-flex flex-column flex-md-row align-items-start p-3">
+                                    <span class="mb-1 mb-md-0 me-md-3 detail-label">
+                                        Procurement Category
+                                    </span>
+                                    <span class="flex-grow-1">Goods</span>
+                                </div>
+
+                                <div class="list-group-item d-flex flex-column flex-md-row align-items-start p-3">
+                                    <span class="mb-1 mb-md-0 me-md-3 detail-label">
+                                        Procurement Procedure
+                                    </span>
+                                    <span class="flex-grow-1">Single Stage-One Envelope</span>
+                                </div>
+
+                                <div class="list-group-item d-flex flex-column flex-md-row align-items-start p-3">
+                                    <span class="mb-1 mb-md-0 me-md-3 detail-label">
+                                        Sector
+                                    </span>
+                                    <span class="flex-grow-1">Electrical Items</span>
+                                </div>
+
+                                <div class="list-group-item d-flex flex-column flex-md-row align-items-start p-3">
+                                    <span class="mb-1 mb-md-0 me-md-3 detail-label">
+                                        Tender Nature
+                                    </span>
+                                    <span class="flex-grow-1">Local</span>
+                                </div>
+                            </div>
+
+                            <!-- Description -->
+                                                        <!-- Note -->
+                            
+                            <!-- Remarks -->
+                                                    </div>
+                    </div>
+
+                    <!-- Important Dates -->
+                    <div class="detail-card">
+                        <div class="card-body p-0">
+                            <h3 class="section-title">Important Dates</h3>
+
+                            <div class="list-group list-group-flush">
+                                <!-- Advertisement Date -->
+                                <div class="list-group-item d-flex flex-column flex-md-row align-items-start p-3">
+                                    <span class="mb-1 mb-md-0 me-md-3 detail-label">
+                                        Advertisement Date
+                                    </span>
+                                    <span class="flex-grow-1">
+                                        October 03, 2026                                    </span>
+                                </div>
+
+                                <!-- Closing Date & Time -->
+                                <div class="list-group-item d-flex flex-column flex-md-row align-items-start p-3">
+                                    <span class="mb-1 mb-md-0 me-md-3 detail-label">
+                                        Closing Date & Time
+                                    </span>
+                                    <span class="flex-grow-1">
+                                        <strong>October 21, 2026</strong>
+                                        at <strong>11:00 AM</strong>
+                                    </span>
+                                </div>
+
+                                <!-- Opening Time (Conditional) -->
+                                                                    <div class="list-group-item d-flex flex-column flex-md-row align-items-start p-3">
+                                        <span class="mb-1 mb-md-0 me-md-3 detail-label">
+                                            Opening Time
+                                        </span>
+                                        <span class="flex-grow-1">
+                                            11:30 AM                                        </span>
+                                    </div>
+                                                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Financial Information -->
+                                            <div class="detail-card">
+                            <div class="card-body p-0">
+                                <h3 class="section-title">Financial Information</h3>
+
+                                <div class="list-group list-group-flush">
+                                                                        <!-- Estimated Cost -->
+                                    <!-- <div class="list-group-item d-flex flex-column flex-md-row align-items-start p-3">
+                                            <span class="mb-1 mb-md-0 me-md-3 detail-label">
+                                                Estimated Cost
+                                            </span>
+                                            <span class="flex-grow-1">
+                                                 Rs.  
+                                            </span>
+                                        </div> -->
+                                    
+                                                                            <!-- Earnest Money -->
+                                        <div class="list-group-item d-flex flex-column flex-md-row align-items-start p-3">
+                                            <span class="mb-1 mb-md-0 me-md-3 detail-label">
+                                                Bid Security                                            </span>
+                                            <span class="flex-grow-1">
+                                                2,645,144.00                                            </span>
+                                        </div>
+                                    
+                                                                        <!-- Tender Document Cost -->
+                                    <!-- <div class="list-group-item d-flex flex-column flex-md-row align-items-start p-3">
+                                            <span class="mb-1 mb-md-0 me-md-3 detail-label">
+                                                Tender Document Cost
+                                            </span>
+                                            <span class="flex-grow-1">
+                                                Rs.                                             </span>
+                                        </div>
+                                     -->
+
+                                                                            <!-- Bid Validity -->
+                                        <div class="list-group-item d-flex flex-column flex-md-row align-items-start p-3">
+                                            <span class="mb-1 mb-md-0 me-md-3 detail-label">
+                                                Bid Validity
+                                            </span>
+                                            <span class="flex-grow-1">
+                                                90 days
+                                            </span>
+                                        </div>
+                                                                    </div>
+                            </div>
+                        </div>
+                    
+                    <!-- Procurement / Disposal & Workflow -->
+                    <div class="detail-card mb-4">
+                        <div class="card-body p-0">
+                            <h3 class="section-title">
+                                Procurement & Workflow
+                            </h3>
+
+                            <div class="list-group list-group-flush">
+
+                                <!-- Method -->
+                                <div class="list-group-item d-flex flex-column flex-md-row align-items-start p-3">
+                                    <span class="mb-1 mb-md-0 me-md-3 detail-label">
+                                        Method
+                                    </span>
+                                    <span class="flex-grow-1">
+                                                                                    <span class="badge bg-primary fs-6">
+                                                Competitive Bidding                                            </span>
+                                                                            </span>
+                                </div>
+
+                                <!-- Workflow Type -->
+                                <div class="list-group-item d-flex flex-column flex-md-row align-items-start p-3">
+                                    <span class="mb-1 mb-md-0 me-md-3 detail-label">
+                                        Workflow Type
+                                    </span>
+                                    <span class="flex-grow-1">
+                                                                                    <span class="badge bg-primary fs-6">
+                                                <i class="ri-file-list-3-line me-1"></i>
+                                                Standard Evaluation Process
+                                            </span>
+                                                                            </span>
+                                </div>
+
+                                
+                                
+                            </div>
+                        </div>
+                    </div>
+
+                    
+                    <!-- Corrigendum History -->
+                    
+                </div>
+            </section>
+        </main>
+
+        <!-- Footer -->
+        <footer class="text-center">
+    <div class="container">
+        <p class="mb-0">Copyright © 2026 Public Procurement Regulatory Authority. All rights reserved.</p>
+    </div>
+</footer>
+
+
+<div class="scroll-progress d-none d-xxl-block">
+    <a href="#" class="scroll-top" aria-label="scroll">
+        <span class="scroll-text">Scroll</span><span class="scroll-line"><span class="scroll-point"></span></span>
+    </a>
+</div>
+    </div>
+
+
+    <script type="text/javascript" src="/public/assets/js/jquery.js"></script>
+    <script type="text/javascript" src="/public/assets/js/bootstrap.bundle.min.js"></script>
+    <script type="text/javascript" src="/public/assets/js/main.js"></script>
+</body>
+
+</html>

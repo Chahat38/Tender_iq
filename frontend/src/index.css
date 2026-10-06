@@ -1,0 +1,9 @@
+@import "tailwindcss";
+
+/* Avoid a white flash before React mounts (app is a dark theme). */
+html,
+body,
+#root {
+  min-height: 100%;
+  background-color: #020617; /* slate-950 */
+}
