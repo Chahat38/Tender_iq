@@ -132,8 +132,10 @@ polite listing pass → bookkeeping) once per registered source, so
 `-o addopts` is needed to override the default exclusion in
 `pytest.ini`.
 
-* `.github/workflows/ci.yml` — byte-compile, validate migration SQL,
-  run the offline suite on every push/PR.
+* `.github/workflows/ci.yml` — lint (ruff), byte-compile, validate
+  migration SQL, offline suite; a second job runs the `postgres`
+  RLS/storage tests against a disposable Postgres 16 service
+  container (no `TEST_DATABASE_URL` needed in CI).
 * `.github/workflows/collect.yml` — scheduled per-source matrix:
   compliance gate → collect (`--enrich-details`) → document fetch →
   log/database artifacts; alerts via `SLACK_WEBHOOK_URL`.
