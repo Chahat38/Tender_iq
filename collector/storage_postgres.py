@@ -840,6 +840,139 @@ class PostgresStorage:
         return [_serialise(row) for row in rows]
 
     # ------------------------------------------------------------------
+    # user-facing alerts (Stage 7)
+    # ------------------------------------------------------------------
+
+    def list_profiles(self) -> list[dict[str, Any]]:
+        """Every profile (user + alert threshold), stable order."""
+        with self.conn.cursor() as cur:
+            cur.execute(
+                "SELECT user_id, company_name, plan, alert_threshold "
+                "FROM profiles ORDER BY user_id"
+            )
+            rows = cur.fetchall()
+        return [_serialise(row) for row in rows]
+
+    def list_match_alert_candidates(
+        self, user_id: str, *, min_score: int, limit: int = 500
+    ) -> list[dict[str, Any]]:
+        """Matched opportunities with no ``new_match`` alert yet."""
+        with self.conn.cursor() as cur:
+            cur.execute(
+                "SELECT o.id, o.title, m.relevance_score, m.level, m.reasons "
+                "FROM opportunity_matches m "
+                "JOIN opportunities o ON o.id = m.opportunity_id "
+                "WHERE m.user_id = %s AND m.relevance_score >= %s "
+                "AND NOT EXISTS ("
+                "  SELECT 1 FROM alerts a WHERE a.user_id = %s "
+                "  AND a.opportunity_id = o.id AND a.type = 'new_match')"
+                "ORDER BY m.relevance_score DESC, o.id LIMIT %s",
+                (user_id, min_score, user_id, limit),
+            )
+            rows = cur.fetchall()
+        return [_serialise(row) for row in rows]
+
+    def list_watchlist_opportunities(
+        self, user_id: str, *, min_score: int, limit: int = 500
+    ) -> list[dict[str, Any]]:
+        """Deadlined opportunities the user watches (matched or saved)."""
+        with self.conn.cursor() as cur:
+            cur.execute(
+                "SELECT o.id, o.title, o.deadline FROM opportunities o "
+                "WHERE o.deadline IS NOT NULL "
+                "AND ("
+                "  EXISTS (SELECT 1 FROM opportunity_matches m "
+                "          WHERE m.opportunity_id = o.id AND m.user_id = %s "
+                "          AND m.relevance_score >= %s)"
+                "  OR EXISTS (SELECT 1 FROM saved_opportunities s "
+                "             WHERE s.opportunity_id = o.id AND s.user_id = %s)"
+                ") "
+                "ORDER BY o.deadline, o.id LIMIT %s",
+                (user_id, min_score, user_id, limit),
+            )
+            rows = cur.fetchall()
+        return [_serialise(row) for row in rows]
+
+    def list_update_alert_candidates(
+        self,
+        user_id: str,
+        *,
+        min_score: int,
+        alert_type: str,
+        field: str | None = None,
+        exclude_field: str | None = None,
+        limit: int = 500,
+    ) -> list[dict[str, Any]]:
+        """Watched opportunities with updates and no alert of this type."""
+        with self.conn.cursor() as cur:
+            cur.execute(
+                "SELECT o.id, o.title, MAX(u.detected_at) AS latest_update "
+                "FROM opportunities o "
+                "JOIN opportunity_updates u ON u.opportunity_id = o.id "
+                "WHERE u.field = COALESCE(%s, u.field) "
+                "AND u.field <> COALESCE(%s, '~~none~~') "
+                "AND ("
+                "  EXISTS (SELECT 1 FROM opportunity_matches m "
+                "          WHERE m.opportunity_id = o.id AND m.user_id = %s "
+                "          AND m.relevance_score >= %s)"
+                "  OR EXISTS (SELECT 1 FROM saved_opportunities s "
+                "             WHERE s.opportunity_id = o.id AND s.user_id = %s)"
+                ") "
+                "AND NOT EXISTS ("
+                "  SELECT 1 FROM alerts a WHERE a.user_id = %s "
+                "  AND a.opportunity_id = o.id AND a.type = %s) "
+                "GROUP BY o.id, o.title ORDER BY o.id LIMIT %s",
+                (field, exclude_field, user_id, min_score, user_id,
+                 user_id, alert_type, limit),
+            )
+            rows = cur.fetchall()
+        return [_serialise(row) for row in rows]
+
+    def insert_alert(
+        self,
+        *,
+        user_id: str,
+        opportunity_id: int,
+        type: str,
+        title: str,
+        body: str | None,
+        channel: str = "in_app",
+        created_at: str,
+    ) -> int:
+        """Insert one alert; returns 1 when created, 0 when it exists."""
+        with self.conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO alerts (user_id, opportunity_id, type, title, "
+                "body, channel, created_at) VALUES (%s, %s, %s, %s, %s, %s, %s) "
+                "ON CONFLICT (user_id, opportunity_id, type) DO NOTHING",
+                (user_id, opportunity_id, type, title, body, channel, created_at),
+            )
+            count = cur.rowcount
+        self.conn.commit()
+        return int(count)
+
+    def list_alerts(
+        self, user_id: str, *, unread_only: bool = False, limit: int = 50
+    ) -> list[dict[str, Any]]:
+        """Newest alerts for one user."""
+        with self.conn.cursor() as cur:
+            if unread_only:
+                cur.execute(
+                    "SELECT * FROM alerts WHERE user_id = %s "
+                    "AND read_at IS NULL "
+                    "ORDER BY created_at DESC, id DESC LIMIT %s",
+                    (user_id, limit),
+                )
+            else:
+                cur.execute(
+                    "SELECT * FROM alerts WHERE user_id = %s "
+                    "ORDER BY created_at DESC, id DESC LIMIT %s",
+                    (user_id, limit),
+                )
+            rows = cur.fetchall()
+        return [_serialise(row) for row in rows]
+
+    # ------------------------------------------------------------------
     # opportunities (read)
     # ------------------------------------------------------------------
 
