@@ -1,0 +1,250 @@
+/** Component tests for the App shell (the ./api module is fully mocked). */
+
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import App from "./App";
+import type {
+  Opportunity,
+  OpportunityDetail,
+  OpportunityPage,
+  SearchPage,
+  Source,
+} from "./types";
+
+vi.mock("./api", () => ({
+  ApiError: class ApiError extends Error {
+    status: number;
+    detail: string;
+    constructor(status: number, detail: string) {
+      super(`API error ${status}: ${detail}`);
+      this.name = "ApiError";
+      this.status = status;
+      this.detail = detail;
+    }
+  },
+  listOpportunities: vi.fn(),
+  listSources: vi.fn(),
+  getOpportunity: vi.fn(),
+  searchOpportunities: vi.fn(),
+}));
+
+import * as api from "./api";
+const mockedList = vi.mocked(api.listOpportunities);
+const mockedListSources = vi.mocked(api.listSources);
+const mockedSearch = vi.mocked(api.searchOpportunities);
+const mockedGet = vi.mocked(api.getOpportunity);
+
+// RTL cannot auto-register cleanup when vitest globals are off.
+afterEach(() => {
+  cleanup();
+});
+
+function makeOpportunity(overrides: Partial<Opportunity> = {}): Opportunity {
+  return {
+    id: 1,
+    source_id: 1,
+    external_id: "TS0000015263E",
+    reference_number: "P89833",
+    title: "Re-tender for Maintenance Store Items SZHL FY 2026-27",
+    organization: "Ministry of National Health Services",
+    description: null,
+    source_url:
+      "https://epms.ppra.gov.pk/public/tenders/tender-details/TS0000015263E",
+    published_at: "2026-09-30T11:00:00+05:00",
+    deadline: "2026-10-21T11:00:00+05:00",
+    location: "Islamabad",
+    category: null,
+    procurement_type: null,
+    content_hash: "abc123",
+    first_seen_at: "2026-10-01T00:00:00+00:00",
+    last_seen_at: "2026-10-01T00:00:00+00:00",
+    last_verified_at: "2026-10-01T00:00:00+00:00",
+    ...overrides,
+  };
+}
+
+const page: OpportunityPage = {
+  total: 2,
+  limit: 20,
+  offset: 0,
+  opportunities: [
+    makeOpportunity(),
+    makeOpportunity({
+      id: 2,
+      external_id: "TS0000015253E",
+      reference_number: null,
+      title: "Supply of laboratory equipment for district hospital",
+    }),
+  ],
+};
+
+const sources: Source[] = [
+  {
+    id: 1,
+    name: "PPRA EPMS",
+    adapter_type: "PPRAEpmsAdapter",
+    active: 1,
+    robots_allowed: 1,
+    terms_checked: 1,
+    requires_authentication: 0,
+    crawl_frequency: null,
+    last_crawled_at: null,
+  },
+];
+
+const searchPage: SearchPage = {
+  query: "medical",
+  total: 1,
+  limit: 20,
+  offset: 0,
+  results: [
+    {
+      opportunity_id: 1,
+      external_id: "TS0000015263E",
+      source_id: 1,
+      title: "Re-tender for Maintenance Store Items SZHL FY 2026-27",
+      organization: "Ministry of National Health Services",
+      snippet: "supply of medical equipment and furniture",
+      deadline: "2026-10-21T11:00:00+05:00",
+      location: null,
+      category: null,
+      procurement_type: null,
+      reference_number: null,
+      source_url:
+        "https://epms.ppra.gov.pk/public/tenders/tender-details/TS0000015263E",
+      rank: -3.2,
+    },
+  ],
+};
+
+const detail: OpportunityDetail = {
+  ...makeOpportunity({ id: 2, title: "Supply of laboratory equipment for district hospital" }),
+  documents: [
+    { id: 1, url: "https://epms.ppra.gov.pk/pdf?file=tender.pdf", filename: "tender.pdf" },
+  ],
+  updates: [],
+};
+
+beforeEach(() => {
+  vi.resetAllMocks();
+  mockedList.mockResolvedValue(page);
+  mockedListSources.mockResolvedValue(sources);
+  mockedSearch.mockResolvedValue(searchPage);
+});
+
+describe("App browse mode", () => {
+  it("renders the opportunity list with paging metadata", async () => {
+    render(<App />);
+    expect(
+      await screen.findByText(
+        "Re-tender for Maintenance Store Items SZHL FY 2026-27",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("Supply of laboratory equipment for district hospital"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Showing 1–2 of 2")).toBeInTheDocument();
+    expect(mockedList).toHaveBeenCalledWith(
+      { limit: 20, offset: 0 },
+      expect.anything(),
+    );
+  });
+
+  it("filters by source in browse mode", async () => {
+    render(<App />);
+    await screen.findByText(
+      "Re-tender for Maintenance Store Items SZHL FY 2026-27",
+    );
+    fireEvent.change(screen.getByLabelText("Filter by source"), {
+      target: { value: "1" },
+    });
+    await waitFor(() =>
+      expect(mockedList).toHaveBeenLastCalledWith(
+        { limit: 20, offset: 0, sourceId: 1 },
+        expect.anything(),
+      ),
+    );
+  });
+
+  it("pages through results with Next", async () => {
+    mockedList.mockResolvedValue({ ...page, total: 21 });
+    render(<App />);
+    await screen.findByText(
+      "Re-tender for Maintenance Store Items SZHL FY 2026-27",
+    );
+    fireEvent.click(screen.getByRole("button", { name: /Next/ }));
+    await waitFor(() =>
+      expect(mockedList).toHaveBeenLastCalledWith(
+        { limit: 20, offset: 20 },
+        expect.anything(),
+      ),
+    );
+    expect(screen.getByText("Showing 21–21 of 21")).toBeInTheDocument();
+  });
+});
+
+describe("App search mode", () => {
+  it("submits a search and shows ranked hits with snippets", async () => {
+    render(<App />);
+    await screen.findByText(
+      "Re-tender for Maintenance Store Items SZHL FY 2026-27",
+    );
+    fireEvent.change(screen.getByLabelText("Search tenders"), {
+      target: { value: "medical" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Search" }));
+    expect(
+      await screen.findByText("supply of medical equipment and furniture"),
+    ).toBeInTheDocument();
+    expect(mockedSearch).toHaveBeenCalledWith(
+      "medical",
+      { limit: 20, offset: 0 },
+      expect.anything(),
+    );
+  });
+
+  it("clears a search and returns to the browse list", async () => {
+    render(<App />);
+    await screen.findByText(
+      "Re-tender for Maintenance Store Items SZHL FY 2026-27",
+    );
+    fireEvent.change(screen.getByLabelText("Search tenders"), {
+      target: { value: "medical" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Search" }));
+    await screen.findByText("supply of medical equipment and furniture");
+    fireEvent.click(screen.getByRole("button", { name: "Clear" }));
+    expect(
+      await screen.findByText("Showing 1–2 of 2"),
+    ).toBeInTheDocument();
+    expect(mockedList).toHaveBeenLastCalledWith(
+      { limit: 20, offset: 0 },
+      expect.anything(),
+    );
+  });
+});
+
+describe("App detail view", () => {
+  it("opens a detail view from a row and returns to the list", async () => {
+    mockedGet.mockResolvedValue(detail);
+    render(<App />);
+    fireEvent.click(
+      await screen.findByText(
+        "Supply of laboratory equipment for district hospital",
+      ),
+    );
+    expect(await screen.findByText("Documents (1)")).toBeInTheDocument();
+    expect(screen.getByText(/tender\.pdf/)).toBeInTheDocument();
+    expect(mockedGet).toHaveBeenCalledWith(2, expect.anything());
+    fireEvent.click(screen.getByRole("button", { name: /Back to list/i }));
+    expect(await screen.findByText("Showing 1–2 of 2")).toBeInTheDocument();
+  });
+
+  it("shows an error banner when the API fails", async () => {
+    mockedList.mockRejectedValue(new api.ApiError(500, "Internal database error."));
+    render(<App />);
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "API error 500: Internal database error.",
+    );
+  });
+});
