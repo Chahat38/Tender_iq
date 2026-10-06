@@ -12,7 +12,6 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 
 import pytest
-
 from models import NormalizedOpportunity
 from storage_postgres import PostgresStorage
 

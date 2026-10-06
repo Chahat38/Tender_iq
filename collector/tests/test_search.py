@@ -9,7 +9,6 @@ end. No network access happens in this module.
 from datetime import datetime, timezone
 
 import pytest
-
 from models import NormalizedOpportunity
 from search import SearchIndex, _fts_query_from, is_fts5_available
 

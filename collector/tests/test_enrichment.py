@@ -5,9 +5,9 @@ detail pages whose tender numbers exist in the listing fixtures). No
 network access happens in this module.
 """
 
-import pytest
 from datetime import datetime
 
+import pytest
 from adapters.base import SourceAdapter
 from adapters.ppra_epms import PPRAEpmsAdapter
 from main import main as cli_main

@@ -1,0 +1,41 @@
+# Ruff configuration (lint only; formatting is deliberately off so the
+# existing hand-written style stays untouched).
+#
+#   ruff check collector scripts
+#
+# CI runs this as part of ci.yml.
+
+target-version = "py312"
+line-length = 100
+extend-exclude = [
+    "frontend",
+    "collector/fixtures",
+    "collector/logs",
+    "var",
+    "**/__pycache__",
+]
+
+[lint]
+# E4/E7/E9 - syntax/undefined names/imports; F - pyflakes (unused,
+# undefined, bad imports); I - import sorting; B - bugbear patterns.
+select = ["E4", "E7", "E9", "F", "I", "B"]
+ignore = [
+    "B008",  # FastAPI Depends/Query defaults are idiomatic, not a bug
+]
+
+[lint.per-file-ignores]
+# CLI modules bootstrap sys.path before their first import - E402 is
+# intentional there.
+"collector/main.py" = ["E402"]
+"collector/api.py" = ["E402"]
+# Test helpers import inside test methods on purpose.
+"collector/tests/*" = ["E402"]
+# RLS denial tests assert that any database error is raised -
+# psycopg' concrete exception type varies (undefined table, policy
+# violation, failed SQL) across Postgres versions.
+"collector/tests/test_postgres_rls.py" = ["B017"]
+
+[lint.isort]
+# Keep `import x as y` together with plain imports instead of
+# splitting into one statement per aliased name.
+combine-as-imports = true

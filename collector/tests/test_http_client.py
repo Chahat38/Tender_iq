@@ -2,7 +2,6 @@
 
 import pytest
 import requests
-
 from http_client import PoliteClient, RobotsDisallowedError, RobotsUnavailableError
 
 BASE = "https://tenders.example.pk"

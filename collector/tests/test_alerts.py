@@ -5,9 +5,8 @@ from __future__ import annotations
 import json
 from datetime import datetime, timedelta, timezone
 
-import pytest
-
 import alerts
+import pytest
 from ai import utc_now_iso
 from models import NormalizedOpportunity
 from storage import Storage

@@ -5,10 +5,9 @@ from __future__ import annotations
 import io
 from datetime import datetime, timezone
 
+import documents
 import docx
 import pytest
-
-import documents
 from http_client import RobotsDisallowedError
 from models import NormalizedOpportunity
 from storage import Storage
