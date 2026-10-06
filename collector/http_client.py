@@ -145,6 +145,19 @@ class PoliteClient:
             return False
         return parser.can_fetch(self.session.headers["User-Agent"], url)
 
+    def robots_allowed(self, url: str) -> bool | None:
+        """Robots verdict for ``url``: True / False, or None when unknown.
+
+        Unlike :meth:`is_allowed` (which collapses "cannot verify" into
+        ``False``), this distinguishes an explicit Disallow (False) from
+        an unfetchable robots.txt (None) - the compliance check records
+        the difference on the source row.
+        """
+        parser = self._robot_parser_for(url)
+        if parser is None:
+            return None
+        return parser.can_fetch(self.session.headers["User-Agent"], url)
+
     def _ensure_allowed(self, url: str) -> None:
         """Raise unless robots.txt verifiably allows fetching ``url``."""
         parser = self._robot_parser_for(url)

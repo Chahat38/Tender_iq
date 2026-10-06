@@ -148,6 +148,142 @@ class PostgresStorage:
             rows = cur.fetchall()
         return [_serialise(row) for row in rows]
 
+    def register_source(
+        self,
+        name: str,
+        adapter_type: str,
+        *,
+        base_url: str | None = None,
+        active: bool = True,
+        terms_checked: bool = False,
+        requires_authentication: bool = False,
+        crawl_frequency: str | None = None,
+    ) -> int:
+        """Insert or refresh a source's compliance facts.
+
+        Mirrors :meth:`storage.Storage.register_source`: the registry
+        owns the compliance columns and overwrites them; runtime health
+        columns are never touched.
+        """
+        with self.conn.cursor() as cur:
+            cur.execute(
+                "SELECT id FROM procurement_sources WHERE name = %s", (name,)
+            )
+            row = cur.fetchone()
+            if row is None:
+                cur.execute(
+                    "INSERT INTO procurement_sources "
+                    "(name, adapter_type, base_url, active, terms_checked, "
+                    "requires_authentication, crawl_frequency) "
+                    "VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING id",
+                    (
+                        name,
+                        adapter_type,
+                        base_url,
+                        active,
+                        terms_checked,
+                        requires_authentication,
+                        crawl_frequency,
+                    ),
+                )
+                source_id = int(cur.fetchone()["id"])
+            else:
+                source_id = int(row["id"])
+                cur.execute(
+                    "UPDATE procurement_sources SET adapter_type = %s, "
+                    "base_url = %s, active = %s, terms_checked = %s, "
+                    "requires_authentication = %s, crawl_frequency = %s "
+                    "WHERE id = %s",
+                    (
+                        adapter_type,
+                        base_url,
+                        active,
+                        terms_checked,
+                        requires_authentication,
+                        crawl_frequency,
+                        source_id,
+                    ),
+                )
+        self.conn.commit()
+        return source_id
+
+    def get_source_by_id(self, source_id: int) -> dict[str, Any] | None:
+        """Return one source row by id as a plain dict, or None."""
+        with self.conn.cursor() as cur:
+            cur.execute(
+                "SELECT * FROM procurement_sources WHERE id = %s", (source_id,)
+            )
+            row = cur.fetchone()
+        return _serialise(row)
+
+    def set_robots_allowed(self, source_id: int, allowed: bool | None) -> None:
+        """Record the latest robots.txt verdict for a source."""
+        with self.conn.cursor() as cur:
+            cur.execute(
+                "UPDATE procurement_sources SET robots_allowed = %s WHERE id = %s",
+                (allowed, source_id),
+            )
+        self.conn.commit()
+
+    def set_source_status(
+        self,
+        source_id: int,
+        *,
+        last_status: str,
+        last_crawled_at: str,
+        consecutive_failures: int,
+    ) -> None:
+        """Update a source's runtime health fields after a run."""
+        with self.conn.cursor() as cur:
+            cur.execute(
+                "UPDATE procurement_sources SET last_status = %s, "
+                "last_crawled_at = %s, consecutive_failures = %s WHERE id = %s",
+                (last_status, last_crawled_at, consecutive_failures, source_id),
+            )
+        self.conn.commit()
+
+    def insert_operational_alert(
+        self,
+        source_id: int,
+        alert_type: str,
+        *,
+        severity: str = "error",
+        message: str,
+        consecutive_failures: int = 0,
+        channel: str = "internal",
+    ) -> int:
+        """Write one ``operational_alerts`` row and return its id."""
+        with self.conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO operational_alerts "
+                "(source_id, alert_type, severity, message, "
+                "consecutive_failures, channel, created_at) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING id",
+                (
+                    source_id,
+                    alert_type,
+                    severity,
+                    message,
+                    consecutive_failures,
+                    channel,
+                    utc_now_iso(),
+                ),
+            )
+            alert_id = int(cur.fetchone()["id"])
+        self.conn.commit()
+        return alert_id
+
+    def has_open_operational_alert(self, source_id: int, alert_type: str) -> bool:
+        """True when an unacknowledged alert of this type is open."""
+        with self.conn.cursor() as cur:
+            cur.execute(
+                "SELECT 1 FROM operational_alerts WHERE source_id = %s "
+                "AND alert_type = %s AND acknowledged_at IS NULL LIMIT 1",
+                (source_id, alert_type),
+            )
+            row = cur.fetchone()
+        return row is not None
+
     # ------------------------------------------------------------------
     # opportunities
     # ------------------------------------------------------------------

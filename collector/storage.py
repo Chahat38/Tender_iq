@@ -443,6 +443,131 @@ class Storage:
         self.conn.commit()
         return int(cur.lastrowid)
 
+    def register_source(
+        self,
+        name: str,
+        adapter_type: str,
+        *,
+        base_url: str | None = None,
+        active: bool = True,
+        terms_checked: bool = False,
+        requires_authentication: bool = False,
+        crawl_frequency: str | None = None,
+    ) -> int:
+        """Insert or refresh a source's compliance facts.
+
+        The registry owns ``base_url``/``active``/``terms_checked``/
+        ``requires_authentication``/``crawl_frequency`` and overwrites
+        them on every call; runtime columns (``last_crawled_at``,
+        ``last_status``, ``consecutive_failures``, ``robots_allowed``)
+        are never touched here.
+        """
+        row = self.conn.execute(
+            "SELECT id FROM sources WHERE name = ?", (name,)
+        ).fetchone()
+        if row is None:
+            cur = self.conn.execute(
+                "INSERT INTO sources (name, adapter_type, base_url, active, "
+                "terms_checked, requires_authentication, crawl_frequency) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (
+                    name,
+                    adapter_type,
+                    base_url,
+                    int(active),
+                    int(terms_checked),
+                    int(requires_authentication),
+                    crawl_frequency,
+                ),
+            )
+            self.conn.commit()
+            return int(cur.lastrowid)
+        source_id = int(row["id"])
+        self.conn.execute(
+            "UPDATE sources SET adapter_type = ?, base_url = ?, active = ?, "
+            "terms_checked = ?, requires_authentication = ?, crawl_frequency = ? "
+            "WHERE id = ?",
+            (
+                adapter_type,
+                base_url,
+                int(active),
+                int(terms_checked),
+                int(requires_authentication),
+                crawl_frequency,
+                source_id,
+            ),
+        )
+        self.conn.commit()
+        return source_id
+
+    def get_source_by_id(self, source_id: int) -> dict[str, Any] | None:
+        """Return one source row by id as a plain dict, or None."""
+        row = self.conn.execute(
+            "SELECT * FROM sources WHERE id = ?", (source_id,)
+        ).fetchone()
+        return dict(row) if row is not None else None
+
+    def set_robots_allowed(self, source_id: int, allowed: bool | None) -> None:
+        """Record the latest robots.txt verdict for a source."""
+        self.conn.execute(
+            "UPDATE sources SET robots_allowed = ? WHERE id = ?",
+            (None if allowed is None else int(allowed), source_id),
+        )
+        self.conn.commit()
+
+    def set_source_status(
+        self,
+        source_id: int,
+        *,
+        last_status: str,
+        last_crawled_at: str,
+        consecutive_failures: int,
+    ) -> None:
+        """Update a source's runtime health fields after a run."""
+        self.conn.execute(
+            "UPDATE sources SET last_status = ?, last_crawled_at = ?, "
+            "consecutive_failures = ? WHERE id = ?",
+            (last_status, last_crawled_at, consecutive_failures, source_id),
+        )
+        self.conn.commit()
+
+    def insert_operational_alert(
+        self,
+        source_id: int,
+        alert_type: str,
+        *,
+        severity: str = "error",
+        message: str,
+        consecutive_failures: int = 0,
+        channel: str = "internal",
+    ) -> int:
+        """Write one ``operational_alerts`` row and return its id."""
+        cur = self.conn.execute(
+            "INSERT INTO operational_alerts "
+            "(source_id, alert_type, severity, message, consecutive_failures, "
+            "channel, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (
+                source_id,
+                alert_type,
+                severity,
+                message,
+                consecutive_failures,
+                channel,
+                utc_now_iso(),
+            ),
+        )
+        self.conn.commit()
+        return int(cur.lastrowid)
+
+    def has_open_operational_alert(self, source_id: int, alert_type: str) -> bool:
+        """True when an unacknowledged alert of this type is open."""
+        row = self.conn.execute(
+            "SELECT 1 FROM operational_alerts WHERE source_id = ? "
+            "AND alert_type = ? AND acknowledged_at IS NULL LIMIT 1",
+            (source_id, alert_type),
+        ).fetchone()
+        return row is not None
+
     # ------------------------------------------------------------------
     # opportunities
     # ------------------------------------------------------------------
