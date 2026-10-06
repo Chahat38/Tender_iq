@@ -13,19 +13,29 @@ Run it from the repository root::
 Endpoints:
 
 * ``GET /`` -- service descriptor with endpoint links,
+* ``GET /health`` -- liveness probe with coarse row counts,
 * ``GET /sources`` -- registered procurement sources,
 * ``GET /opportunities`` -- newest-first page of opportunities,
 * ``POST /opportunities/query`` -- same, with a JSON body for
   tri-state deadline filtering,
 * ``GET /opportunities/{opportunity_id}`` -- one opportunity with
   documents and update history,
+* ``GET /opportunities/{opportunity_id}/analysis`` -- the AI analysis
+  of one opportunity,
 * ``GET /search?q=...`` -- FTS5 full-text search (same strict query
-  translation and bm25 ranking as the CLI).
+  translation and bm25 ranking as the CLI),
+* ``GET /alerts?user_id=...`` -- user-facing alerts (newest first),
+* ``GET /matches?user_id=...`` -- per-user relevance matches.
 
 Errors: unknown ids answer 404, invalid parameters answer 422, a
 SQLite build without FTS5 makes ``/search`` answer 503 (every other
-endpoint keeps working), and database failures answer 500 without
-leaking SQL or file paths.
+endpoint keeps working), database failures answer 500 without leaking
+SQL or file paths, and exceeding the per-IP budget answers 429 with a
+``Retry-After`` header (``TENDERSCOUT_RATE_LIMIT`` requests per
+minute, default 300, 0 disables). Every response carries
+``X-Content-Type-Options: nosniff``, ``X-Frame-Options: DENY`` and
+``Referrer-Policy: no-referrer``. Internal columns (``raw_content``,
+``storage_path``, dedup columns) never appear in responses.
 
 The database path defaults to ``$TENDERSCOUT_DB_PATH`` or
 ``collector/tenderscout.db`` (resolved relative to this file, so the
@@ -34,11 +44,13 @@ server can be started from any working directory).
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import sqlite3
 import sys
 import threading
+import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import datetime
@@ -137,6 +149,75 @@ class OpportunityDetailOut(OpportunityOut):
 
     documents: list[DocumentOut] = Field(default_factory=list)
     updates: list[UpdateOut] = Field(default_factory=list)
+
+
+class AnalysisOut(BaseModel):
+    """AI analysis of one opportunity (``opportunity_ai`` row).
+
+    List columns are stored as JSON text by the collector and decoded
+    here; malformed JSON answers an empty list instead of a 500.
+    """
+
+    opportunity_id: int
+    category: str | None = None
+    subcategory: str | None = None
+    keywords: list[str] = Field(default_factory=list)
+    procurement_type: str | None = None
+    requirements: list[str] = Field(default_factory=list)
+    date_conflicts: list[str] = Field(default_factory=list)
+    prompt_version: str | None = None
+    created_at: str
+
+    @field_validator("keywords", "requirements", "date_conflicts", mode="before")
+    @classmethod
+    def _decode_json_list(cls, value: Any) -> list[Any]:
+        if isinstance(value, str):
+            try:
+                parsed = json.loads(value)
+            except ValueError:
+                return []
+            return parsed if isinstance(parsed, list) else []
+        return list(value or [])
+
+
+class AlertOut(BaseModel):
+    """One user-facing alert (``alerts`` row)."""
+
+    id: str
+    user_id: str
+    opportunity_id: int
+    type: str
+    title: str
+    body: str | None = None
+    channel: str = "in_app"
+    created_at: str
+    read_at: str | None = None
+
+
+class MatchOut(BaseModel):
+    """One (opportunity, user) relevance score."""
+
+    id: str
+    opportunity_id: int
+    user_id: str
+    relevance_score: int
+    level: str
+    reasons: list[str] = Field(default_factory=list)
+    prompt_version: str | None = None
+    model: str | None = None
+    created_at: str
+    updated_at: str
+
+    @field_validator("reasons", mode="before")
+    @classmethod
+    def _decode_reasons(cls, value: Any) -> list[Any]:
+        if isinstance(value, str):
+            try:
+                parsed = json.loads(value)
+            except ValueError:
+                return []
+            return parsed if isinstance(parsed, list) else []
+        return list(value or [])
 
 
 class OpportunityPage(BaseModel):
@@ -265,6 +346,7 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
     app.state.db_path = db_path
     app.state.storage = None
     app.state.search_index = None
+    app.state.rate_state = {}
 
     @app.exception_handler(FtsUnavailableError)
     async def _fts_unavailable_handler(
@@ -284,6 +366,57 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
             status_code=500,
             content={"detail": "Internal database error."},
         )
+
+    def _rate_limit_settings() -> tuple[int, int]:
+        """(max_requests, window_seconds); 0 disables the limiter."""
+        raw = os.environ.get("TENDERSCOUT_RATE_LIMIT", "300")
+        try:
+            max_requests = int(raw)
+        except ValueError:
+            max_requests = 300
+        return max_requests, 60
+
+    @app.middleware("http")
+    async def _hardening_middleware(request: Any, call_next: Any) -> Any:
+        """Security headers on every response + per-IP rate limiting.
+
+        The limiter is a fixed 60-second window keyed by client IP
+        (``TENDERSCOUT_RATE_LIMIT`` requests per window, default 300,
+        0 disables it) - enough to stop scrapers without a reverse
+        proxy, and it never touches the read paths themselves.
+        """
+        max_requests, window = _rate_limit_settings()
+        if max_requests > 0:
+            ip = request.client.host if request.client else "unknown"
+            now = time.monotonic()
+            state = app.state.rate_state
+            if len(state) > 10_000:  # prune stale buckets opportunistically
+                app.state.rate_state = {
+                    key: bucket
+                    for key, bucket in state.items()
+                    if now - bucket[0] < window
+                }
+                state = app.state.rate_state
+            bucket = state.get(ip)
+            if bucket is None or now - bucket[0] >= window:
+                state[ip] = [now, 1]
+            else:
+                bucket[1] += 1
+                if bucket[1] > max_requests:
+                    retry_after = int(window - (now - bucket[0])) + 1
+                    response: Any = JSONResponse(
+                        status_code=429,
+                        content={"detail": "rate limit exceeded"},
+                        headers={"Retry-After": str(retry_after)},
+                    )
+                    response.headers["X-Content-Type-Options"] = "nosniff"
+                    response.headers["X-Frame-Options"] = "DENY"
+                    return response
+        response = await call_next(request)
+        response.headers.setdefault("X-Content-Type-Options", "nosniff")
+        response.headers.setdefault("X-Frame-Options", "DENY")
+        response.headers.setdefault("Referrer-Policy", "no-referrer")
+        return response
 
     def _get_storage() -> Storage:
         """Return the shared Storage handle, initializing it lazily."""
@@ -355,14 +488,29 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
             "version": "0.1.0",
             "mode": "read-only",
             "endpoints": {
+                "health": "/health",
                 "sources": "/sources",
                 "opportunities": "/opportunities",
                 "opportunity_query": "POST /opportunities/query",
                 "opportunity": "/opportunities/{opportunity_id}",
+                "opportunity_analysis": "/opportunities/{opportunity_id}/analysis",
                 "search": "/search?q=QUERY",
+                "alerts": "/alerts?user_id=USER_ID",
+                "matches": "/matches?user_id=USER_ID",
                 "docs": "/docs",
             },
         }
+
+    @app.get("/health", tags=["meta"])
+    def health() -> dict[str, Any]:
+        """Liveness probe with coarse row counts (no paths, no SQL)."""
+        with data_lock:
+            storage = _get_storage()
+            return {
+                "status": "ok",
+                "opportunities": storage.count_opportunities(),
+                "sources": len(storage.list_sources()),
+            }
 
     @app.get("/sources", response_model=list[SourceOut], tags=["sources"])
     def list_sources() -> list[SourceOut]:
@@ -450,6 +598,61 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
             documents=[DocumentOut(**doc) for doc in documents],
             updates=[UpdateOut(**upd) for upd in updates],
         )
+
+    @app.get(
+        "/opportunities/{opportunity_id}/analysis",
+        response_model=AnalysisOut,
+        tags=["opportunities"],
+    )
+    def get_opportunity_analysis(
+        opportunity_id: int = FastAPIPath(..., ge=1),
+    ) -> AnalysisOut:
+        """AI analysis of one opportunity (404 until the worker ran)."""
+        with data_lock:
+            storage = _get_storage()
+            if storage.get_opportunity(opportunity_id) is None:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"opportunity {opportunity_id} not found",
+                )
+            analysis = storage.get_opportunity_ai(opportunity_id)
+            if analysis is None:
+                raise HTTPException(
+                    status_code=404,
+                    detail=(
+                        f"no analysis for opportunity {opportunity_id} yet "
+                        "(run the collector's AI pass)"
+                    ),
+                )
+        return AnalysisOut(**analysis)
+
+    @app.get("/alerts", response_model=list[AlertOut], tags=["alerts"])
+    def list_alerts(
+        user_id: str = Query(
+            ..., min_length=1, max_length=128, description="Alert owner."
+        ),
+        unread_only: bool = Query(False, description="Only unread alerts."),
+        limit: int = Query(50, ge=1, le=_API_LIMIT_MAX),
+    ) -> list[AlertOut]:
+        """Newest alerts for one user (read-only; mark-read is external)."""
+        with data_lock:
+            rows = _get_storage().list_alerts(
+                user_id, unread_only=unread_only, limit=limit
+            )
+        return [AlertOut(**row) for row in rows]
+
+    @app.get("/matches", response_model=list[MatchOut], tags=["matches"])
+    def list_matches(
+        user_id: str = Query(..., min_length=1, max_length=128),
+        min_score: int = Query(0, ge=0, le=100),
+        limit: int = Query(50, ge=1, le=_API_LIMIT_MAX),
+    ) -> list[MatchOut]:
+        """Best relevance matches for one user, score-descending."""
+        with data_lock:
+            rows = _get_storage().list_matches(
+                user_id, min_score=min_score, limit=limit
+            )
+        return [MatchOut(**row) for row in rows]
 
     @app.get("/search", response_model=SearchPage, tags=["search"])
     def search(

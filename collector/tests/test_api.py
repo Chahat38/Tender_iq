@@ -8,6 +8,8 @@ server process, no network.
 
 from datetime import datetime, timezone
 
+import json as jsonlib
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -394,3 +396,189 @@ class TestReadOnly:
         response = harness.client.post("/opportunities", json={})
         assert response.status_code == 405  # known path, wrong method
         assert harness.client.get("/definitely/not/here").status_code == 404
+
+
+class TestHealth:
+    def test_health_reports_counts(self, harness) -> None:
+        harness.add()
+        response = harness.client.get("/health")
+        assert response.status_code == 200
+        body = response.json()
+        assert body["status"] == "ok"
+        assert body["opportunities"] == 1
+        assert body["sources"] >= 1
+
+    def test_root_lists_new_endpoints(self, harness) -> None:
+        endpoints = harness.client.get("/").json()["endpoints"]
+        assert endpoints["health"] == "/health"
+        assert "alerts" in endpoints
+        assert "matches" in endpoints
+        assert "opportunity_analysis" in endpoints
+
+
+class TestSecurityHeaders:
+    def test_headers_on_success(self, harness) -> None:
+        response = harness.client.get("/health")
+        assert response.headers["X-Content-Type-Options"] == "nosniff"
+        assert response.headers["X-Frame-Options"] == "DENY"
+        assert response.headers["Referrer-Policy"] == "no-referrer"
+
+    def test_rate_limit_answers_429_with_retry_after(
+        self, harness, monkeypatch
+    ) -> None:
+        monkeypatch.setenv("TENDERSCOUT_RATE_LIMIT", "3")
+        for _ in range(3):
+            assert harness.client.get("/health").status_code == 200
+        response = harness.client.get("/health")
+        assert response.status_code == 429
+        assert int(response.headers["Retry-After"]) >= 1
+        assert response.headers["X-Content-Type-Options"] == "nosniff"
+        assert response.json()["detail"] == "rate limit exceeded"
+
+    def test_rate_limit_zero_disables_the_limiter(
+        self, harness, monkeypatch
+    ) -> None:
+        monkeypatch.setenv("TENDERSCOUT_RATE_LIMIT", "0")
+        for _ in range(10):
+            assert harness.client.get("/health").status_code == 200
+
+    def test_invalid_rate_limit_env_falls_back_to_default(
+        self, harness, monkeypatch
+    ) -> None:
+        monkeypatch.setenv("TENDERSCOUT_RATE_LIMIT", "not-a-number")
+        for _ in range(5):
+            assert harness.client.get("/health").status_code == 200
+
+
+class TestAnalysisEndpoint:
+    def test_unknown_opportunity_is_404(self, harness) -> None:
+        assert harness.client.get("/opportunities/999/analysis").status_code == 404
+
+    def test_missing_analysis_is_404_with_hint(self, harness) -> None:
+        opp_id = harness.add()
+        response = harness.client.get(f"/opportunities/{opp_id}/analysis")
+        assert response.status_code == 404
+        assert "no analysis" in response.json()["detail"]
+
+    def test_analysis_decodes_json_lists(self, harness) -> None:
+        opp_id = harness.add()
+        harness.storage.upsert_opportunity_ai(
+            opp_id,
+            category="ICT & Telecom",
+            subcategory=None,
+            keywords=jsonlib.dumps(["laptop", "tender"]),
+            procurement_type="open tender",
+            requirements=jsonlib.dumps(["Bid security required"]),
+            date_conflicts=jsonlib.dumps([]),
+            prompt_version="2026-10-v1",
+            created_at="2026-10-06T00:00:00+00:00",
+        )
+        response = harness.client.get(f"/opportunities/{opp_id}/analysis")
+        assert response.status_code == 200
+        body = response.json()
+        assert body["category"] == "ICT & Telecom"
+        assert body["keywords"] == ["laptop", "tender"]
+        assert body["requirements"] == ["Bid security required"]
+        assert body["date_conflicts"] == []
+
+    def test_invalid_id_is_422(self, harness) -> None:
+        assert harness.client.get("/opportunities/0/analysis").status_code == 422
+
+
+class TestAlertsEndpoint:
+    def test_empty_is_ok(self, harness) -> None:
+        response = harness.client.get("/alerts", params={"user_id": "u1"})
+        assert response.status_code == 200
+        assert response.json() == []
+
+    def test_user_id_is_required(self, harness) -> None:
+        assert harness.client.get("/alerts").status_code == 422
+
+    def test_alerts_returned_newest_first(self, harness) -> None:
+        from storage_common import utc_now_iso
+
+        opp_id = harness.add()
+        for kind in ("new_match", "deadline_approaching"):
+            harness.storage.insert_alert(
+                user_id="u1",
+                opportunity_id=opp_id,
+                type=kind,
+                title=f"Alert {kind}",
+                body="body",
+                created_at=utc_now_iso(),
+            )
+        response = harness.client.get("/alerts", params={"user_id": "u1"})
+        assert response.status_code == 200
+        rows = response.json()
+        assert len(rows) == 2
+        assert {row["type"] for row in rows} == {
+            "new_match",
+            "deadline_approaching",
+        }
+        assert rows[0]["id"] and rows[0]["user_id"] == "u1"
+
+    def test_unread_filter_and_limit_validation(self, harness) -> None:
+        from storage_common import utc_now_iso
+
+        opp_id = harness.add()
+        harness.storage.insert_alert(
+            user_id="u1",
+            opportunity_id=opp_id,
+            type="new_match",
+            title="Only alert",
+            body=None,
+            created_at=utc_now_iso(),
+        )
+        unread = harness.client.get(
+            "/alerts", params={"user_id": "u1", "unread_only": True}
+        )
+        assert len(unread.json()) == 1
+        assert harness.client.get(
+            "/alerts", params={"user_id": "u1", "limit": 0}
+        ).status_code == 422
+
+
+class TestMatchesEndpoint:
+    def test_matches_returned_score_desc(self, harness) -> None:
+        from storage_common import utc_now_iso
+
+        opp_id = harness.add()
+        now = utc_now_iso()
+        for score in (55, 90):
+            harness.storage.upsert_opportunity_match(
+                opp_id if score == 90 else opp_id,
+                "u1",
+                relevance_score=score,
+                level="HIGH" if score >= 70 else "MEDIUM",
+                reasons=jsonlib.dumps(["capability keywords matched: x"]),
+                prompt_version="v1",
+                model="deterministic-v1",
+                created_at=now,
+                updated_at=now,
+            )
+        response = harness.client.get("/matches", params={"user_id": "u1"})
+        assert response.status_code == 200
+        rows = response.json()
+        assert [row["relevance_score"] for row in rows] == [90]
+        assert rows[0]["reasons"] == ["capability keywords matched: x"]
+
+    def test_min_score_filters(self, harness) -> None:
+        from storage_common import utc_now_iso
+
+        opp_id = harness.add()
+        now = utc_now_iso()
+        harness.storage.upsert_opportunity_match(
+            opp_id,
+            "u1",
+            relevance_score=30,
+            level="LOW",
+            reasons="[]",
+            prompt_version="v1",
+            model="deterministic-v1",
+            created_at=now,
+            updated_at=now,
+        )
+        response = harness.client.get(
+            "/matches", params={"user_id": "u1", "min_score": 40}
+        )
+        assert response.json() == []
