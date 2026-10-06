@@ -145,7 +145,10 @@ with `combine-as-imports`; `E402` allowed where modules bootstrap
 `sys.path`, `B017` allowed in the RLS tests because any psycopg error
 proves the policy fired), byte-compilation, pglast SQL validation, and
 the offline pytest suite. Live behavior is covered by the scheduled
-`collect.yml` matrix.
+`collect.yml` matrix plus the opt-in `network` suite
+(`tests/test_live_sources.py`: one polite pipeline run per registered
+source against the live sites - run with
+`pytest -o addopts="-ra" -m network`, never from CI).
 
 ## Frontend
 

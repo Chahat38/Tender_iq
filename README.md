@@ -123,9 +123,14 @@ crawling: `CONTACT_EMAIL`. Optional: `DATABASE_URL`,
 
 ```bash
 python -m pytest                 # offline suite (default; what CI runs)
-python -m pytest -m network      # live-source smoke tests (needs network)
+python -m pytest -o addopts="-ra" -m network   # live source smoke tests
 python -m pytest -m postgres     # RLS tests (needs TEST_DATABASE_URL)
 ```
+
+The `network` suite drives the real pipeline (compliance gate →
+polite listing pass → bookkeeping) once per registered source, so
+`-o addopts` is needed to override the default exclusion in
+`pytest.ini`.
 
 * `.github/workflows/ci.yml` — byte-compile, validate migration SQL,
   run the offline suite on every push/PR.
