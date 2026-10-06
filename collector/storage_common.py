@@ -13,6 +13,12 @@ from typing import Any, Mapping
 
 from models import NormalizedOpportunity
 
+#: Sentinel used by the API's deadline filters: "no lower bound" (rows
+#: without a deadline are KEPT). ``None`` is the other spellings"
+#: meaning ("hide undated rows"). A single shared object so both
+#: storage backends compare identity consistently.
+NULL_DEADLINE_FILTER = object()
+
 #: Opportunity fields compared for change detection (source_url and the
 #: identity fields are deliberately excluded -- source_url is never
 #: overwritten, and GET-style date-window filters never drop undated

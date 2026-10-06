@@ -15,6 +15,7 @@ Endpoints:
 * ``GET /`` -- service descriptor with endpoint links,
 * ``GET /health`` -- liveness probe with coarse row counts,
 * ``GET /sources`` -- registered procurement sources,
+* ``GET /locations`` -- distinct locations for the city filter,
 * ``GET /opportunities`` -- newest-first page of opportunities,
 * ``POST /opportunities/query`` -- same, with a JSON body for
   tri-state deadline filtering,
@@ -274,6 +275,12 @@ class OpportunityFilter(BaseModel):
     limit: int = Field(20, ge=0, le=_API_LIMIT_MAX)
     offset: int = Field(0, ge=0)
     source_id: int | None = Field(None, ge=1)
+    location: str | None = Field(
+        None,
+        max_length=120,
+        description="Keep rows whose location contains this text "
+        "(case-insensitive substring; scraped locations are free text).",
+    )
     deadline_before: datetime | None = Field(
         None,
         description="Only rows with a deadline strictly before this ISO datetime.",
@@ -455,6 +462,7 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
         limit: int,
         offset: int,
         source_id: int | None,
+        location: str | None,
         deadline_before: datetime | None,
         deadline_after: Any,
     ) -> OpportunityPage:
@@ -465,11 +473,13 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
                 limit=limit,
                 offset=offset,
                 source_id=source_id,
+                location=location,
                 deadline_before=deadline_before,
                 deadline_after=deadline_after,
             )
             total = storage.count_opportunities(
                 source_id=source_id,
+                location=location,
                 deadline_before=deadline_before,
                 deadline_after=deadline_after,
             )
@@ -490,6 +500,7 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
             "endpoints": {
                 "health": "/health",
                 "sources": "/sources",
+                "locations": "/locations",
                 "opportunities": "/opportunities",
                 "opportunity_query": "POST /opportunities/query",
                 "opportunity": "/opportunities/{opportunity_id}",
@@ -528,6 +539,12 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
         ),
         offset: int = Query(0, ge=0),
         source_id: int | None = Query(None, ge=1),
+        location: str | None = Query(
+            None,
+            max_length=120,
+            description="Keep rows whose location contains this text "
+            "(case-insensitive substring; scraped locations are free text).",
+        ),
         deadline_before: datetime | None = Query(
             None,
             description="Only rows with a deadline strictly before this datetime.",
@@ -543,11 +560,19 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
             limit=limit,
             offset=offset,
             source_id=source_id,
+            location=location,
             deadline_before=deadline_before,
             deadline_after=(
                 deadline_after if deadline_after is not None else NULL_DEADLINE_FILTER
             ),
         )
+
+    @app.get("/locations", response_model=list[str], tags=["opportunities"])
+    def list_locations() -> list[str]:
+        """Distinct location strings currently in the database (a facet
+        for the city filter; values are opaque scraped text)."""
+        with data_lock:
+            return _get_storage().list_distinct_locations()
 
     @app.post(
         "/opportunities/query",
@@ -570,6 +595,7 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
             limit=body.limit,
             offset=body.offset,
             source_id=body.source_id,
+            location=body.location,
             deadline_before=body.deadline_before,
             deadline_after=deadline_after,
         )

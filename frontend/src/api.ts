@@ -77,6 +77,8 @@ export interface ListParams {
   offset?: number;
   /** Restrict to one registered source (browse mode only). */
   sourceId?: number;
+  /** Keep rows whose location contains this text (city filter). */
+  location?: string;
 }
 
 /** Newest-first page of opportunities. */
@@ -89,6 +91,7 @@ export function listOpportunities(
       limit: params.limit,
       offset: params.offset,
       source_id: params.sourceId,
+      location: params.location,
     })}`,
     signal,
   );
@@ -121,4 +124,9 @@ export function searchOpportunities(
 /** All registered procurement sources. */
 export function listSources(signal?: AbortSignal): Promise<Source[]> {
   return requestJson<Source[]>("/sources", signal);
+}
+
+/** Distinct location strings currently in the database (city filter facet). */
+export function listLocations(signal?: AbortSignal): Promise<string[]> {
+  return requestJson<string[]>("/locations", signal);
 }

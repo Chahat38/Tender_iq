@@ -160,7 +160,7 @@ class TestOpportunityList:
             "/opportunities",
             params={"source_id": harness.storage.conn.execute(
                 "SELECT id FROM sources WHERE name = 'Other Source'"
-            ).fetchone()["id"]},
+).fetchone()["id"]},
         )
         rows = response.json()["opportunities"]
         assert [r["id"] for r in rows] == [other]
@@ -185,6 +185,52 @@ class TestOpportunityList:
             params={"deadline_after": "2026-10-15T00:00:00Z"},
         ).json()
         assert [r["external_id"] for r in after["opportunities"]] == ["302"]
+
+    def test_location_filter_is_case_insensitive_substring(self, harness) -> None:
+        harness.add(location="Lahore, Pakistan", external_id="401")
+        harness.add(location="Karachi, Pakistan", external_id="402")
+        harness.add(location=None, external_id="403")
+        matched = harness.client.get(
+            "/opportunities", params={"location": "lahore"}
+        ).json()
+        assert [r["external_id"] for r in matched["opportunities"]] == ["401"]
+        matched = harness.client.get(
+            "/opportunities", params={"location": "stan"}
+        ).json()
+        # rows are newest-first: 402 was inserted after 401
+        assert [r["external_id"] for r in matched["opportunities"]] == ["402", "401"]
+        none_match = harness.client.get(
+            "/opportunities", params={"location": "Peshawar"}
+        ).json()
+        assert none_match["opportunities"] == []
+        # total follows the same filter as the rows
+        assert matched["total"] == 2
+
+    def test_locations_facet_lists_distinct_nonempty(self, harness) -> None:
+        # Two rows sharing one location collapse to a single facet value
+        # (case-insensitively); rows without a location are hidden, and
+        # the list is sorted lowercased.
+        harness.add(location="Karachi, Pakistan", external_id="501")
+        harness.add(location="karachi, pakistan", external_id="502")
+        harness.add(location="Lahore, Pakistan", external_id="503")
+        harness.add(location=None, external_id="504")
+        facet = harness.client.get("/locations")
+        assert facet.status_code == 200
+        assert facet.json() == ["karachi, pakistan", "lahore, pakistan"]
+
+    def test_location_filter_combines_with_source(self, harness) -> None:
+        other_id = harness.add(
+            source_name="Other Source", location="Lahore, Pakistan", external_id="601"
+        )
+        harness.add(location="Lahore, Pakistan", external_id="602")
+        source_id = harness.storage.conn.execute(
+            "SELECT id FROM sources WHERE name = 'Other Source'"
+        ).fetchone()["id"]
+        response = harness.client.get(
+            "/opportunities",
+            params={"location": "Lahore", "source_id": source_id},
+        )
+        assert [r["id"] for r in response.json()["opportunities"]] == [other_id]
 
 
 class TestOpportunityQueryPost:
@@ -219,7 +265,7 @@ class TestOpportunityQueryPost:
         body = {"deadline_after": "2026-10-15T00:00:00Z"}
         rows = harness.client.post(
             "/opportunities/query", json=body
-        ).json()["opportunities"]
+).json()["opportunities"]
         assert [r["external_id"] for r in rows] == ["405"]
 
     def test_deadline_after_true_is_rejected(self, harness) -> None:
@@ -227,6 +273,15 @@ class TestOpportunityQueryPost:
             "/opportunities/query", json={"deadline_after": True}
         )
         assert response.status_code == 422
+
+    def test_location_filter_in_post_body(self, harness) -> None:
+        harness.add(location="Islamabad, Pakistan", external_id="501")
+        harness.add(location="Quetta, Pakistan", external_id="502")
+        body = {"location": "quetta"}
+        rows = harness.client.post(
+            "/opportunities/query", json=body
+        ).json()["opportunities"]
+        assert [r["external_id"] for r in rows] == ["502"]
 
 
 class TestOpportunityDetail:

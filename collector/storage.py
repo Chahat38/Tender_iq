@@ -19,6 +19,7 @@ from uuid import uuid4
 
 from models import NormalizedOpportunity
 from storage_common import (
+    NULL_DEADLINE_FILTER,
     TRACKED_FIELDS as _TRACKED_FIELDS,
     collect_changes,
     db_value as _db_value,
@@ -331,8 +332,8 @@ _API_RESULT_LIMIT_MAX = 500
 #: Sentinel for list_opportunities(deadline_after=...): "no lower bound".
 #: A unique object() so callers can never collide with a real datetime
 #: or None; the API maps `deadline_after=False` (POST) / `deadline_after
-#: =null` (GET) onto it.
-NULL_DEADLINE_FILTER = object()
+#: =null` (GET) onto it. Defined (and imported) in storage_common so the
+#: Postgres backend compares against the very same object.
 
 #: Columns added after the first schema shipped (applied to pre-existing
 #: databases with ALTER TABLE; new databases get them from _SCHEMA).
@@ -1154,6 +1155,7 @@ class Storage:
         source_id: int | None = None,
         deadline_before: datetime | None = None,
         deadline_after: Any = NULL_DEADLINE_FILTER,
+        location: str | None = None,
     ) -> int:
         """Count opportunities matching the list_opportunities filters.
 
@@ -1164,6 +1166,7 @@ class Storage:
             source_id=source_id,
             deadline_before=deadline_before,
             deadline_after=deadline_after,
+            location=location,
         )
         row = self.conn.execute(
             f"SELECT COUNT(*) AS n FROM opportunities{clause}", params
@@ -1186,6 +1189,7 @@ class Storage:
         source_id: int | None = None,
         deadline_before: datetime | None = None,
         deadline_after: Any = NULL_DEADLINE_FILTER,
+        location: str | None = None,
     ) -> list[dict[str, Any]]:
         """Return a page of opportunities, newest first, as plain dicts.
 
@@ -1198,6 +1202,9 @@ class Storage:
         Filtering:
 
         * ``source_id`` restricts to one source,
+        * ``location`` keeps rows whose location contains the given
+          text, case-insensitively (a loose match - scraped location
+          strings are free text, not a controlled vocabulary),
         * ``deadline_before`` / ``deadline_after`` keep rows whose
           deadline (an ISO-8601 string, so string comparison works) is
           strictly inside the window. By default the window's end is
@@ -1217,6 +1224,7 @@ class Storage:
             source_id=source_id,
             deadline_before=deadline_before,
             deadline_after=deadline_after,
+            location=location,
         )
         rows = self.conn.execute(
             f"SELECT * FROM opportunities{clause} "
@@ -1230,10 +1238,13 @@ class Storage:
         source_id: int | None,
         deadline_before: datetime | None,
         deadline_after: Any,
+        location: str | None = None,
     ) -> tuple[str, list[Any]]:
         """Build the WHERE clause shared by list_opportunities and
         count_opportunities so both always filter identically.
 
+        ``location`` uses ``LIKE`` (ASCII case-insensitive) around the
+        given substring; it is bounded to keep the pattern honest.
         ``deadline_after`` uses the :data:`NULL_DEADLINE_FILTER` sentinel
         for "no lower bound"; ``None`` hides rows without a deadline.
         """
@@ -1242,6 +1253,9 @@ class Storage:
         if source_id is not None:
             where.append("source_id = ?")
             params.append(source_id)
+        if location:
+            where.append("location LIKE ?")
+            params.append(f"%{location}%")
         if deadline_before is not None:
             where.append("deadline IS NOT NULL AND deadline < ?")
             params.append(_db_value(deadline_before))
@@ -1256,6 +1270,22 @@ class Storage:
                 params.append(_db_value(deadline_after))
         clause = f" WHERE {' AND '.join(where)}" if where else ""
         return clause, params
+
+    def list_distinct_locations(self) -> list[str]:
+        """Return every distinct non-empty location string, lowercased
+        and sorted.
+
+        Fed directly into the API's city facet; values are the scraped
+        source text collapsed case-insensitively (``Karachi,
+        Pakistan`` and ``karachi, pakistan`` are the same city), so the
+        frontend treats them as opaque labels, never parses them.
+        """
+        rows = self.conn.execute(
+            "SELECT DISTINCT lower(location) AS location FROM opportunities "
+            "WHERE location IS NOT NULL AND location <> '' "
+            "ORDER BY location"
+        ).fetchall()
+        return [str(row["location"]) for row in rows]
 
     def list_sources(self) -> list[dict[str, Any]]:
         """Return every registered source row as a plain dict."""

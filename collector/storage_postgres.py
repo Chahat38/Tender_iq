@@ -973,15 +973,126 @@ class PostgresStorage:
         return [_serialise(row) for row in rows]
 
     # ------------------------------------------------------------------
-    # opportunities (read)
+    # opportunities (read) - mirrors storage.py's API read paths so the
+    # read-only HTTP API can serve either backend (SQLite default,
+    # Postgres when DATABASE_URL is set).
     # ------------------------------------------------------------------
 
-    def count_opportunities(self) -> int:
-        """Total number of stored opportunities."""
+    def list_opportunities(
+        self,
+        limit: int = 20,
+        offset: int = 0,
+        source_id: int | None = None,
+        deadline_before: Any = None,
+        deadline_after: Any = None,
+        location: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Return a page of opportunities, newest first, as plain dicts.
+
+        Same semantics as :meth:`storage.Storage.list_opportunities`
+        (Postgres flavour): ``id`` descending, ``limit``/``offset``
+        clamped and validated, ``location`` is an ASCII case-insensitive
+        substring match, ``deadline_before``/``deadline_after`` are ISO
+        datetimes with the same open/closed window rules.
+        """
+        limit = int(limit)
+        offset = int(offset)
+        if limit < 0 or offset < 0:
+            raise ValueError("limit and offset must be non-negative")
+        limit = min(limit, 500)
+
+        clause, params = self._opportunity_filter_params(
+            source_id=source_id,
+            deadline_before=deadline_before,
+            deadline_after=deadline_after,
+            location=location,
+        )
         with self.conn.cursor() as cur:
-            cur.execute("SELECT COUNT(*) AS n FROM opportunities")
+            cur.execute(
+                f"SELECT o.id, o.source_id, o.external_id, o.reference_number, "
+                "o.title, o.organization, o.description, o.source_url, "
+                "o.published_at, o.deadline, o.location, o.category, "
+                "o.procurement_type, o.content_hash, o.first_seen_at, "
+                "o.last_seen_at, o.last_verified_at "
+                f"FROM opportunities o{clause} "
+                "ORDER BY o.id DESC LIMIT %s OFFSET %s",
+                (*params, limit, offset),
+            )
+            rows = cur.fetchall()
+        return [_serialise(row) for row in rows]
+
+    def count_opportunities(
+        self,
+        source_id: int | None = None,
+        deadline_before: Any = None,
+        deadline_after: Any = None,
+        location: str | None = None,
+    ) -> int:
+        """Count opportunities matching the list_opportunities filters.
+
+        Called without arguments this is the plain total row count (the
+        health check's behavior keeps working).
+        """
+        clause, params = self._opportunity_filter_params(
+            source_id=source_id,
+            deadline_before=deadline_before,
+            deadline_after=deadline_after,
+            location=location,
+        )
+        with self.conn.cursor() as cur:
+            cur.execute(
+                f"SELECT COUNT(*) AS n FROM opportunities o{clause}", params
+            )
             row = cur.fetchone()
         return int(row["n"])
+
+    @staticmethod
+    def _opportunity_filter_params(
+        source_id: int | None,
+        deadline_before: Any,
+        deadline_after: Any,
+        location: str | None = None,
+    ) -> tuple[str, list[Any]]:
+        """Build the WHERE clause shared by the two read methods.
+
+        ``deadline_after`` uses the :data:`NULL_DEADLINE_FILTER`
+        sentinel for "no lower bound"; ``None`` hides undated rows -
+        the same contract as storage.py so both backends filter
+        identically from the API's point of view.
+        """
+        from storage_common import NULL_DEADLINE_FILTER
+
+        where = []
+        params: list[Any] = []
+        if source_id is not None:
+            where.append("o.source_id = %s")
+            params.append(source_id)
+        if location:
+            where.append("o.location ILIKE %s")
+            params.append(f"%{location}%")
+        if deadline_before is not None:
+            where.append("o.deadline IS NOT NULL AND o.deadline < %s")
+            params.append(deadline_before)
+        if deadline_after is not NULL_DEADLINE_FILTER:
+            if deadline_after is None:
+                where.append("o.deadline IS NOT NULL")
+            else:
+                where.append("(o.deadline IS NOT NULL AND o.deadline > %s)")
+                params.append(deadline_after)
+        clause = f" WHERE {' AND '.join(where)}" if where else ""
+        return clause, params
+
+    def list_distinct_locations(self) -> list[str]:
+        """Return every distinct non-empty location string, lowercased
+        and sorted (SQLite backend semantics preserved)."""
+        with self.conn.cursor() as cur:
+            cur.execute(
+                "SELECT DISTINCT lower(location) AS location FROM opportunities "
+                "WHERE location IS NOT NULL AND location <> '' "
+                "ORDER BY location"
+            )
+            rows = cur.fetchall()
+        return [str(row["location"]) for row in rows]
 
     # ------------------------------------------------------------------
     # logs
