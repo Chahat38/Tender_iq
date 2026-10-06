@@ -1,6 +1,7 @@
 import { useEffect, useState, type ChangeEvent } from "react";
 import {
   ApiError,
+  listLocations,
   listOpportunities,
   listSources,
   searchOpportunities,
@@ -47,6 +48,8 @@ function hitToRow(hit: SearchHit): TableRow {
 export default function App() {
   const [sources, setSources] = useState<Source[]>([]);
   const [sourceId, setSourceId] = useState<number | null>(null);
+  const [locations, setLocations] = useState<string[]>([]);
+  const [locationFilter, setLocationFilter] = useState<string>("");
   const [searchInput, setSearchInput] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
   const [offset, setOffset] = useState(0);
@@ -57,12 +60,16 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
 
   // The source filter is optional chrome: if /sources fails, browsing
-  // still works (the main data effect surfaces real API errors).
+  // still works (the main data effect surfaces real API errors). Same
+  // for the city facet - an unavailable facet just hides the dropdown.
   useEffect(() => {
     const controller = new AbortController();
     listSources(controller.signal)
       .then(setSources)
       .catch(() => setSources([]));
+    listLocations(controller.signal)
+      .then(setLocations)
+      .catch(() => setLocations([]));
     return () => controller.abort();
   }, []);
 
@@ -82,7 +89,11 @@ export default function App() {
           },
         )
       : listOpportunities(
-          { ...params, sourceId: sourceId ?? undefined },
+          {
+            ...params,
+            sourceId: sourceId ?? undefined,
+            location: locationFilter || undefined,
+          },
           controller.signal,
         ).then((page) => {
           setRows(page.opportunities.map(toRow));
@@ -111,7 +122,7 @@ export default function App() {
         }
       });
     return () => controller.abort();
-  }, [searchQuery, offset, sourceId, selectedId]);
+  }, [searchQuery, offset, sourceId, locationFilter, selectedId]);
 
   function handleSubmitSearch(query: string) {
     setSearchInput(query);
@@ -129,6 +140,11 @@ export default function App() {
   function handleSourceChange(event: ChangeEvent<HTMLSelectElement>) {
     const value = event.target.value;
     setSourceId(value === "" ? null : Number(value));
+    setOffset(0);
+  }
+
+  function handleLocationChange(event: ChangeEvent<HTMLSelectElement>) {
+    setLocationFilter(event.target.value);
     setOffset(0);
   }
 
@@ -177,6 +193,21 @@ export default function App() {
                 {sources.map((source) => (
                   <option key={source.id} value={source.id}>
                     {source.name}
+                  </option>
+                ))}
+              </select>
+              <select
+                value={locationFilter}
+                onChange={handleLocationChange}
+                disabled={searchQuery !== ""}
+                aria-label="Filter by city"
+                title="City filter applies to browse mode only"
+                className="rounded-md border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-200 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                <option value="">All cities</option>
+                {locations.map((location) => (
+                  <option key={location} value={location}>
+                    {location}
                   </option>
                 ))}
               </select>

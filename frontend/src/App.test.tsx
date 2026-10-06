@@ -24,6 +24,7 @@ vi.mock("./api", () => ({
   },
   listOpportunities: vi.fn(),
   listSources: vi.fn(),
+  listLocations: vi.fn(),
   getOpportunity: vi.fn(),
   searchOpportunities: vi.fn(),
 }));
@@ -31,6 +32,7 @@ vi.mock("./api", () => ({
 import * as api from "./api";
 const mockedList = vi.mocked(api.listOpportunities);
 const mockedListSources = vi.mocked(api.listSources);
+const mockedLocations = vi.mocked(api.listLocations);
 const mockedSearch = vi.mocked(api.searchOpportunities);
 const mockedGet = vi.mocked(api.getOpportunity);
 
@@ -129,6 +131,7 @@ beforeEach(() => {
   vi.resetAllMocks();
   mockedList.mockResolvedValue(page);
   mockedListSources.mockResolvedValue(sources);
+  mockedLocations.mockResolvedValue(["karachi, pakistan", "lahore, pakistan"]);
   mockedSearch.mockResolvedValue(searchPage);
 });
 
@@ -145,8 +148,29 @@ describe("App browse mode", () => {
     ).toBeInTheDocument();
     expect(screen.getByText("Showing 1–2 of 2")).toBeInTheDocument();
     expect(mockedList).toHaveBeenCalledWith(
-      { limit: 20, offset: 0 },
+      { limit: 20, offset: 0, sourceId: undefined, location: undefined },
       expect.anything(),
+    );
+  });
+
+  it("filters by city in browse mode", async () => {
+    render(<App />);
+    await screen.findByText(
+      "Re-tender for Maintenance Store Items SZHL FY 2026-27",
+    );
+    fireEvent.change(screen.getByLabelText("Filter by city"), {
+      target: { value: "karachi, pakistan" },
+    });
+    await waitFor(() =>
+      expect(mockedList).toHaveBeenLastCalledWith(
+        {
+          limit: 20,
+          offset: 0,
+          sourceId: undefined,
+          location: "karachi, pakistan",
+        },
+        expect.anything(),
+      ),
     );
   });
 
@@ -160,7 +184,7 @@ describe("App browse mode", () => {
     });
     await waitFor(() =>
       expect(mockedList).toHaveBeenLastCalledWith(
-        { limit: 20, offset: 0, sourceId: 1 },
+        { limit: 20, offset: 0, sourceId: 1, location: undefined },
         expect.anything(),
       ),
     );
@@ -175,7 +199,7 @@ describe("App browse mode", () => {
     fireEvent.click(screen.getByRole("button", { name: /Next/ }));
     await waitFor(() =>
       expect(mockedList).toHaveBeenLastCalledWith(
-        { limit: 20, offset: 20 },
+        { limit: 20, offset: 20, sourceId: undefined, location: undefined },
         expect.anything(),
       ),
     );
