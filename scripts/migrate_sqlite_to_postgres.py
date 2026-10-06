@@ -329,7 +329,6 @@ def main(argv: list[str] | None = None) -> int:
 
     import psycopg
     from psycopg.rows import dict_row
-
     from storage import Storage
 
     sqlite_path = Path(args.sqlite)

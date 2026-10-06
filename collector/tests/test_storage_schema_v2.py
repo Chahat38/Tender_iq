@@ -10,7 +10,6 @@ from __future__ import annotations
 import sqlite3
 
 import pytest
-
 from storage import Storage
 
 #: Tables the SQLite backend must share with the Supabase contract

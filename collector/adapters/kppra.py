@@ -39,7 +39,6 @@ from urllib.parse import urljoin
 from bs4 import BeautifulSoup, Tag
 from dateutil import parser as date_parser
 from dateutil.tz import gettz
-
 from models import NormalizedOpportunity, RawListing
 
 from .base import FIXTURES_DIR, SourceAdapter

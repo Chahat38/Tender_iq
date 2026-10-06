@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import pytest
-
 from adapters.base import RunResult
 from compliance import ComplianceError
 from ops import (

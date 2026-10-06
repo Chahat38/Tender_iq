@@ -139,11 +139,13 @@ meant to run on a single box without infrastructure, and 429 +
 
 ## Quality tooling
 
-CI runs byte-compilation + pglast SQL validation + the offline pytest
-suite (`ci.yml`); live behavior is covered by the scheduled
-`collect.yml` matrix. A linter (ruff) was not pinned into the repo
-because the package could not be fetched during the session - add it
-to `collector/requirements.txt` and a CI step when the network allows.
+CI runs three gates (`ci.yml`): `ruff check collector scripts`
+(configured in `ruff.toml` - lint only, no reformatting, E4/E7/E9/F/I/B
+with `combine-as-imports`; `E402` allowed where modules bootstrap
+`sys.path`, `B017` allowed in the RLS tests because any psycopg error
+proves the policy fired), byte-compilation, pglast SQL validation, and
+the offline pytest suite. Live behavior is covered by the scheduled
+`collect.yml` matrix.
 
 ## Frontend
 

@@ -6,7 +6,6 @@ import re
 from datetime import datetime
 
 import pytest
-
 from adapters.epads import OFFLINE_LISTING_GLOB, SOURCE_NAME, EpadsAdapter
 
 _REF_RE = re.compile(r"^P\d+$")
@@ -102,7 +101,6 @@ class TestNormalize:
 
     def test_titles_keep_full_text_from_title_attribute(self, adapter) -> None:
         rows = _parse(adapter, "epads_listing_p1.html")
-        visible_first = adapter.read_fixture("epads_listing_p1.html")
         # The visible span text is truncated; the parsed title must be
         # the full title= attribute value when both exist.
         for row in rows[:10]:

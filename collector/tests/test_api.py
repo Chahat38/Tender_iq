@@ -6,14 +6,12 @@ write path) and exercise the app through ``fastapi.testclient`` -- no
 server process, no network.
 """
 
+import json as jsonlib
 from datetime import datetime, timezone
 
-import json as jsonlib
-
 import pytest
-from fastapi.testclient import TestClient
-
 from api import FtsUnavailableError, create_app
+from fastapi.testclient import TestClient
 from models import NormalizedOpportunity
 from search import SearchIndex
 

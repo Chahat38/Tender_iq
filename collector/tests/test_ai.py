@@ -2,13 +2,11 @@
 
 from __future__ import annotations
 
-import io
 import json
 from datetime import datetime, timedelta, timezone
 
-import pytest
-
 import ai
+import pytest
 from models import NormalizedOpportunity
 from storage import Storage
 

@@ -12,7 +12,6 @@ import re
 from pathlib import Path
 
 import pytest
-
 from main import ADAPTERS
 from registry import SOURCE_REGISTRY, spec_for
 

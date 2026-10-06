@@ -3,9 +3,8 @@
 from datetime import datetime, timezone
 
 import pytest
-from pydantic import ValidationError
-
 from models import NormalizedOpportunity, RawListing
+from pydantic import ValidationError
 
 DEADLINE = datetime(2026, 10, 1, 12, 0, tzinfo=timezone.utc)
 

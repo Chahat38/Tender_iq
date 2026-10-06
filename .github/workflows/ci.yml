@@ -44,6 +44,11 @@ jobs:
       - name: Install collector dependencies
         run: python -m pip install -r collector/requirements.txt
 
+      - name: Lint
+        run: |
+          python -m pip install ruff
+          ruff check collector scripts
+
       - name: Byte-compile all Python sources
         run: python -m compileall -q collector scripts
 

@@ -27,9 +27,7 @@ from datetime import datetime
 from urllib.parse import urljoin
 
 from bs4 import BeautifulSoup, Tag
-from dateutil import parser as date_parser
-from dateutil import tz
-
+from dateutil import parser as date_parser, tz
 from models import NormalizedOpportunity, RawListing
 
 from .base import FIXTURES_DIR, SourceAdapter

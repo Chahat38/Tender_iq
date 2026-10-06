@@ -12,9 +12,8 @@ from __future__ import annotations
 
 import uuid
 
-import pytest
-
 import pg_support
+import pytest
 
 pytestmark = pytest.mark.postgres
 

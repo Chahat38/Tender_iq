@@ -3,7 +3,6 @@
 from datetime import datetime, timezone
 
 import pytest
-
 from models import NormalizedOpportunity
 from storage import Storage
 

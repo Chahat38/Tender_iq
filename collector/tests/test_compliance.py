@@ -6,13 +6,12 @@ import sys
 from pathlib import Path
 
 import pytest
-
 from compliance import (
-    ComplianceError,
     INACTIVE,
-    ROBOTS_DISALLOWED,
     REQUIRES_AUTH,
+    ROBOTS_DISALLOWED,
     TERMS_UNCHECKED,
+    ComplianceError,
     enforce_compliance,
     passes,
     record_robots_status,

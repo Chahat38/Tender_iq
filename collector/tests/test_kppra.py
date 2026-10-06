@@ -5,16 +5,13 @@ from __future__ import annotations
 from datetime import datetime
 
 import pytest
-
 from adapters.kppra import (
-    OFFLINE_LISTING_GLOB,
     PAGE_PATH_TEMPLATE,
     PROVINCE,
     REF_URL_TEMPLATE,
     SOURCE_NAME,
     KppraActiveTendersAdapter,
 )
-from models import RawListing
 
 #: First row of the saved fixture (verified against the live page).
 FIXTURE_FIRST = {

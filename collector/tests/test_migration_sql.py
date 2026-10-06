@@ -102,7 +102,7 @@ def policy_loop(sql: str) -> list[tuple[str, str]]:
     (e.g. the first table of the group).
     """
     matches = re.findall(
-        rf"foreach t in array array\[(.*?)\]\s*loop(.*?)end loop;",
+        r"foreach t in array array\[(.*?)\]\s*loop(.*?)end loop;",
         sql,
         re.DOTALL,
     )

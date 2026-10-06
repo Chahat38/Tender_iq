@@ -3,7 +3,6 @@
 from datetime import datetime, timedelta
 
 import pytest
-
 from adapters.ppra_epms import (
     BASE_URL,
     KARACHI_TZ,
