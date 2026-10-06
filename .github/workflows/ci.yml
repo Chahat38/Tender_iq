@@ -1,0 +1,54 @@
+# Continuous integration: offline test suite + migration validation.
+#
+# Deliberately runs only what needs no secrets and no network:
+#   * byte-compilation of every Python module,
+#   * PostgreSQL grammar validation of the Supabase migration
+#     (pglast parses it before it ever reaches a server),
+#   * the default pytest run (offline tests only; `network` and
+#     `postgres` marked tests are deselected by pytest.ini).
+#
+# Network-dependent crawler tests live in the `network` marker and are
+# exercised by the collect workflow instead.
+
+name: ci
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: collector/requirements.txt
+
+      - name: Install collector dependencies
+        run: python -m pip install -r collector/requirements.txt
+
+      - name: Byte-compile all Python sources
+        run: python -m compileall -q collector scripts
+
+      - name: Validate Postgres migration SQL
+        run: python scripts/validate_sql.py
+
+      - name: Run offline test suite
+        run: python -m pytest

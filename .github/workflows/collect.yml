@@ -107,6 +107,18 @@ jobs:
           python collector/main.py --adapter "${{ matrix.adapter }}" --enrich-details \
             2>&1 | tee "collector/logs/collect-${{ matrix.adapter }}-${{ github.run_id }}.log"
 
+      # Download + hash + text-extract the tender documents discovered by
+      # this run (content-addressed under var/documents, polite client,
+      # one attempt per URL). Runs only if the collect step succeeded.
+      - name: Fetch tender documents (${{ matrix.adapter }})
+        env:
+          CONTACT_EMAIL: ${{ secrets.CONTACT_EMAIL }}
+          TENDERSCOUT_DB_PATH: collector/tenderscout.db
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          python collector/main.py --documents --docs-limit 100 \
+            2>&1 | tee -a "collector/logs/documents-${{ matrix.adapter }}-${{ github.run_id }}.log"
+
       # Keep every run's log as an artifact (success or failure) so a
       # silently degraded source can be inspected after the runner is
       # destroyed.
