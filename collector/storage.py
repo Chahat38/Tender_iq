@@ -1022,6 +1022,133 @@ class Storage:
         ).fetchall()
         return [dict(row) for row in rows]
 
+    # ------------------------------------------------------------------
+    # user-facing alerts (Stage 7)
+    # ------------------------------------------------------------------
+
+    def list_profiles(self) -> list[dict[str, Any]]:
+        """Every profile (user + alert threshold), stable order."""
+        rows = self.conn.execute(
+            "SELECT user_id, company_name, plan, alert_threshold "
+            "FROM profiles ORDER BY user_id"
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def list_match_alert_candidates(
+        self, user_id: str, *, min_score: int, limit: int = 500
+    ) -> list[dict[str, Any]]:
+        """Matched opportunities with no ``new_match`` alert yet."""
+        rows = self.conn.execute(
+            "SELECT o.id, o.title, m.relevance_score, m.level, m.reasons "
+            "FROM opportunity_matches m "
+            "JOIN opportunities o ON o.id = m.opportunity_id "
+            "WHERE m.user_id = ? AND m.relevance_score >= ? "
+            "AND NOT EXISTS ("
+            "  SELECT 1 FROM alerts a WHERE a.user_id = ? "
+            "  AND a.opportunity_id = o.id AND a.type = 'new_match')"
+            "ORDER BY m.relevance_score DESC, o.id LIMIT ?",
+            (user_id, min_score, user_id, limit),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def list_watchlist_opportunities(
+        self, user_id: str, *, min_score: int, limit: int = 500
+    ) -> list[dict[str, Any]]:
+        """Deadlined opportunities the user watches (matched or saved)."""
+        rows = self.conn.execute(
+            "SELECT o.id, o.title, o.deadline FROM opportunities o "
+            "WHERE o.deadline IS NOT NULL "
+            "AND ("
+            "  EXISTS (SELECT 1 FROM opportunity_matches m "
+            "          WHERE m.opportunity_id = o.id AND m.user_id = ? "
+            "          AND m.relevance_score >= ?)"
+            "  OR EXISTS (SELECT 1 FROM saved_opportunities s "
+            "             WHERE s.opportunity_id = o.id AND s.user_id = ?)"
+            ") "
+            "ORDER BY o.deadline, o.id LIMIT ?",
+            (user_id, min_score, user_id, limit),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def list_update_alert_candidates(
+        self,
+        user_id: str,
+        *,
+        min_score: int,
+        alert_type: str,
+        field: str | None = None,
+        exclude_field: str | None = None,
+        limit: int = 500,
+    ) -> list[dict[str, Any]]:
+        """Watched opportunities with updates and no alert of this type.
+
+        ``alert_type`` selects which alert kind is de-duplicated;
+        ``field``/``exclude_field`` narrow which ``opportunity_updates``
+        rows count as evidence (e.g. ``field="document_urls"`` for
+        corrigenda).
+        """
+        rows = self.conn.execute(
+            "SELECT o.id, o.title, MAX(u.detected_at) AS latest_update "
+            "FROM opportunities o "
+            "JOIN opportunity_updates u ON u.opportunity_id = o.id "
+            "WHERE u.field = COALESCE(?, u.field) "
+            "AND u.field <> COALESCE(?, '~~none~~') "
+            "AND ("
+            "  EXISTS (SELECT 1 FROM opportunity_matches m "
+            "          WHERE m.opportunity_id = o.id AND m.user_id = ? "
+            "          AND m.relevance_score >= ?)"
+            "  OR EXISTS (SELECT 1 FROM saved_opportunities s "
+            "             WHERE s.opportunity_id = o.id AND s.user_id = ?)"
+            ") "
+            "AND NOT EXISTS ("
+            "  SELECT 1 FROM alerts a WHERE a.user_id = ? "
+            "  AND a.opportunity_id = o.id AND a.type = ?) "
+            "GROUP BY o.id, o.title ORDER BY o.id LIMIT ?",
+            (field, exclude_field, user_id, min_score, user_id,
+             user_id, alert_type, limit),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def insert_alert(
+        self,
+        *,
+        user_id: str,
+        opportunity_id: int,
+        type: str,
+        title: str,
+        body: str | None,
+        channel: str = "in_app",
+        created_at: str,
+    ) -> int:
+        """Insert one alert; returns 1 when created, 0 when it exists."""
+        cursor = self.conn.execute(
+            "INSERT INTO alerts (id, user_id, opportunity_id, type, title, "
+            "body, channel, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT (user_id, opportunity_id, type) DO NOTHING",
+            (uuid4().hex, user_id, opportunity_id, type, title, body,
+             channel, created_at),
+        )
+        self.conn.commit()
+        return int(cursor.rowcount)
+
+    def list_alerts(
+        self, user_id: str, *, unread_only: bool = False, limit: int = 50
+    ) -> list[dict[str, Any]]:
+        """Newest alerts for one user."""
+        if unread_only:
+            rows = self.conn.execute(
+                "SELECT * FROM alerts WHERE user_id = ? AND read_at IS NULL "
+                "ORDER BY created_at DESC, id DESC LIMIT ?",
+                (user_id, limit),
+            ).fetchall()
+        else:
+            rows = self.conn.execute(
+                "SELECT * FROM alerts WHERE user_id = ? "
+                "ORDER BY created_at DESC, id DESC LIMIT ?",
+                (user_id, limit),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
 
     def count_opportunities(
         self,

@@ -39,6 +39,7 @@ from adapters.epads import EpadsAdapter  # noqa: E402
 from adapters.kppra import KppraActiveTendersAdapter  # noqa: E402
 from adapters.ppra_epms import PPRAEpmsAdapter  # noqa: E402
 from ai import run_analysis, run_matching  # noqa: E402
+from alerts import run as run_alerts  # noqa: E402
 from compliance import ComplianceError  # noqa: E402
 from dedup import run as run_dedup  # noqa: E402
 from documents import DOCUMENTS_DIR, download_documents  # noqa: E402
@@ -150,6 +151,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="maximum opportunities to score per --match-user run "
         "(default: 500)",
     )
+    parser.add_argument(
+        "--alerts-only",
+        action="store_true",
+        help="run the user-facing alert worker and exit (also runs after "
+        "every collection)",
+    )
     args = parser.parse_args(argv)
     if args.search is not None and args.rebuild_index:
         parser.error("--search and --rebuild-index are mutually exclusive")
@@ -158,11 +165,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--documents": args.documents,
         "--analyze-only": args.analyze_only,
         "--match-user": args.match_user is not None,
+        "--alerts-only": args.alerts_only,
     }
     if sum(bool(value) for value in exclusive.values()) > 1:
         parser.error(
-            "--dedup-only, --documents, --analyze-only and --match-user "
-            "are mutually exclusive"
+            "--dedup-only, --documents, --analyze-only, --match-user and "
+            "--alerts-only are mutually exclusive"
         )
     if any(exclusive.values()) and (
         args.search is not None or args.rebuild_index
@@ -268,6 +276,20 @@ def main(argv: list[str] | None = None) -> int:
         finally:
             storage.close()
 
+    if args.alerts_only:
+        try:
+            report = run_alerts(storage)
+            print(
+                "Alerts:    "
+                f"created {report['total']} "
+                f"(match {report['new_match']}, deadline {report['deadline_approaching']}, "
+                f"updated {report['opportunity_updated']}, "
+                f"corrigendum {report['corrigendum']})"
+            )
+            return 0
+        finally:
+            storage.close()
+
     # ------------------- collection mode (Stage 1-3) --------------------
     if args.dedup_only:
         try:
@@ -327,6 +349,13 @@ def main(argv: list[str] | None = None) -> int:
             "AI:        "
             f"analyzed {ai_report['analyzed']} "
             f"(llm {ai_report['llm']}, deterministic {ai_report['deterministic']})"
+        )
+        alert_report = run_alerts(storage)
+        print(
+            "Alerts:    "
+            f"created {alert_report['total']} "
+            f"(match {alert_report['new_match']}, "
+            f"deadline {alert_report['deadline_approaching']})"
         )
         _warn_if_index_out_of_sync(storage)
         return 0 if result.failed == 0 else 1
