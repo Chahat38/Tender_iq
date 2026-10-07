@@ -68,6 +68,7 @@ if str(_SCRIPT_DIR) not in sys.path:
 
 from search import SearchIndex  # noqa: E402
 from storage import NULL_DEADLINE_FILTER, Storage  # noqa: E402
+from storage_postgres import PostgresStorage  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -692,7 +693,25 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
         limit: int = Query(20, ge=0, le=_API_LIMIT_MAX),
         offset: int = Query(0, ge=0),
     ) -> SearchPage:
-        """Full-text search (FTS5, bm25-ranked; lower rank = better)."""
+        """Full-text search (FTS5 bm25-ranked; lower rank = better).
+
+        Postgres-backed deployments (``DATABASE_URL``) have no FTS5;
+        the route falls back to :meth:`PostgresStorage.search` with the
+        same strict query contract (every word must match, the last
+        word matches as a prefix).
+        """
+        storage = _get_storage()
+        if isinstance(storage, PostgresStorage):
+            with data_lock:
+                total = storage.search_count(q)
+                results = storage.search(q, limit=limit, offset=offset)
+            return SearchPage(
+                query=q,
+                total=total,
+                limit=limit,
+                offset=offset,
+                results=[SearchHitOut(**vars(hit)) for hit in results],
+            )
         index = _get_index()
         try:
             with data_lock:

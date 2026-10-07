@@ -27,6 +27,11 @@ from typing import Any
 from uuid import uuid4
 
 from models import NormalizedOpportunity
+from search import (
+    _QUERY_MAX_TOKENS as _PG_QUERY_MAX_TOKENS,
+    _TOKEN_RE as _PG_TOKEN_RE,
+    SearchResult,
+)
 from storage_common import (
     TRACKED_FIELDS as _TRACKED_FIELDS,
     collect_changes,
@@ -58,6 +63,19 @@ _INSERT_COLUMNS = (
     "last_verified_at",
     "raw_content",
 )
+
+#: Text columns the SQLite FTS5 backend indexes (search.py). The
+#: Postgres search fallback matches in exactly these columns so both
+#: backends agree on what a query can hit.
+_PG_SEARCH_COLUMNS = ("title", "organization", "description", "category", "location")
+
+#: Hard cap on results per search() call, mirroring search.py.
+_PG_RESULT_LIMIT_MAX = 200
+
+
+def _escape_like(text: str) -> str:
+    """Escape the ILIKE wildcards a user token could smuggle in."""
+    return text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
 class PostgresStorage:
@@ -1093,6 +1111,126 @@ class PostgresStorage:
             )
             rows = cur.fetchall()
         return [str(row["location"]) for row in rows]
+
+    # ------------------------------------------------------------------
+    # search (read) - Postgres fallback for the SQLite-only FTS5 index.
+    # Mirrors search.SearchIndex semantics: every word must match (AND),
+    # the last word matches as a prefix, no word tokens -> nothing.
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _search_tokens(user_query: str) -> list[str]:
+        """The same tokenization SearchIndex applies to user queries."""
+        return _PG_TOKEN_RE.findall((user_query or "").lower())[:_PG_QUERY_MAX_TOKENS]
+
+    def search(
+        self, user_query: str, limit: int = 20, offset: int = 0
+    ) -> list[SearchResult]:
+        """Search stored opportunities; best matches first.
+
+        ``user_query`` is free text: every word must be present (implicit
+        AND) and the last word matches as a prefix - the same strict
+        contract as :meth:`search.SearchIndex.search`, implemented with
+        an ILIKE clause per token plus a match-count rank (returned as a
+        negative float so lower = more relevant, like bm25). Queries
+        without word tokens return no results.
+        """
+        tokens = self._search_tokens(user_query)
+        if not tokens:
+            return []
+        limit = int(limit)
+        offset = int(offset)
+        if limit < 0 or offset < 0:
+            raise ValueError("limit and offset must be non-negative")
+        limit = min(limit, _PG_RESULT_LIMIT_MAX)
+        if limit == 0:
+            return []
+
+        where, w_params, rank_sql, r_params = self._search_clause(tokens)
+        with self.conn.cursor() as cur:
+            cur.execute(
+                "SELECT o.id, o.source_id, o.external_id, o.reference_number, "
+                "o.title, o.organization, o.description, o.source_url, "
+                "o.deadline, o.location, o.category, o.procurement_type, "
+                f"{rank_sql} AS search_rank "
+                f"FROM opportunities o{where} "
+                "ORDER BY search_rank ASC, o.id DESC LIMIT %s OFFSET %s",
+                (*w_params, *r_params, limit, offset),
+            )
+            rows = cur.fetchall()
+        return [self._search_hit(row) for row in rows]
+
+    def search_count(self, user_query: str) -> int:
+        """Return how many stored opportunities match ``user_query``.
+
+        Same strict query translation as :meth:`search` (tokens ANDed,
+        the last token matches as a prefix) but no ranking work. Queries
+        without word tokens match nothing and return 0.
+        """
+        tokens = self._search_tokens(user_query)
+        if not tokens:
+            return 0
+        where, w_params, _, _ = self._search_clause(tokens)
+        with self.conn.cursor() as cur:
+            cur.execute(
+                f"SELECT COUNT(*) AS n FROM opportunities o{where}", w_params
+            )
+            row = cur.fetchone()
+        return int(row["n"])
+
+    @classmethod
+    def _search_clause(cls, tokens: list[str]) -> tuple[str, list[str], str, list[str]]:
+        """WHERE clause + rank expression for a token list.
+
+        One "any column ILIKE pattern" term per token, ANDed together;
+        the final token matches as a prefix. The rank expression counts
+        hits in ``title`` (2 points) and ``organization`` (1 point);
+        ``search_rank`` is the negative so lower = more relevant.
+        """
+        where = []
+        w_params: list[str] = []
+        rank_terms: list[str] = []
+        r_params: list[str] = []
+        for index, token in enumerate(tokens):
+            escaped = _escape_like(token)
+            pattern = f"{escaped}%" if index == len(tokens) - 1 else f"%{escaped}%"
+            term = " OR ".join(
+                f"o.{col} ILIKE %s ESCAPE '\\'" for col in _PG_SEARCH_COLUMNS
+            )
+            where.append(f"({term})")
+            w_params.extend([pattern] * len(_PG_SEARCH_COLUMNS))
+            for col, weight in (("title", 2), ("organization", 1)):
+                rank_terms.append(
+                    f"(CASE WHEN o.{col} ILIKE %s ESCAPE '\\' THEN {weight} ELSE 0 END)"
+                )
+                r_params.append(f"%{escaped}%")
+        clause = f" WHERE {' AND '.join(where)}" if where else ""
+        rank_sql = f"-(({ ' + '.join(rank_terms) })::float)"
+        return clause, w_params, rank_sql, r_params
+
+    @staticmethod
+    def _search_hit(row: Any) -> SearchResult:
+        """Map one joined row onto a SearchResult (SQLite parity)."""
+        deadline = row["deadline"]
+        if isinstance(deadline, datetime):
+            if deadline.tzinfo is None:
+                deadline = deadline.replace(tzinfo=timezone.utc)
+            deadline = deadline.astimezone(timezone.utc).isoformat()
+        return SearchResult(
+            opportunity_id=int(row["id"]),
+            external_id=row["external_id"],
+            source_id=int(row["source_id"]),
+            title=row["title"],
+            organization=row["organization"],
+            snippet=row["description"],
+            deadline=deadline,
+            location=row["location"],
+            category=row["category"],
+            procurement_type=row["procurement_type"],
+            reference_number=row["reference_number"],
+            source_url=row["source_url"],
+            rank=float(row["search_rank"]),
+        )
 
     # ------------------------------------------------------------------
     # logs
