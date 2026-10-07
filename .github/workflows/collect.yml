@@ -53,7 +53,7 @@ jobs:
       fail-fast: false
       matrix:
         # Keep in sync with ADAPTERS in collector/main.py.
-        adapter: [ppra_epms, kppra_active_tenders, epads, ajk_ppra, gb_ppra, pakrail]
+        adapter: [ppra_epms, kppra_active_tenders, epads, ajk_ppra, gb_ppra, pakrail, pia]
 
     steps:
       - name: Check out repository
