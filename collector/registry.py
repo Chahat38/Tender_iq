@@ -99,6 +99,19 @@ SOURCE_REGISTRY: dict[str, SourceSpec] = {
         requires_authentication=False,
         crawl_frequency="every 6h",
     ),
+    "pakrail": SourceSpec(
+        key="pakrail",
+        source_name="Pakistan Railways",
+        base_url="https://www.pakrail.gov.pk",
+        adapter_type="PakrailAdapter",
+        active=True,
+        # Research 2026-10: public /Tenders/index.aspx archive, no
+        # login/CAPTCHA; robots.txt 404 -> no restrictions declared,
+        # PoliteClient robots gate passes (verified 2026-10-07).
+        terms_checked=True,
+        requires_authentication=False,
+        crawl_frequency="every 6h",
+    ),
     "gb_ppra": SourceSpec(
         key="gb_ppra",
         source_name="GB PPRA",

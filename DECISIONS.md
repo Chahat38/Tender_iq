@@ -143,6 +143,18 @@ table, notice PDFs) and GB PPRA (`www.gbppra.gov.pk/viewall`, robots.txt
 allow-all, server-rendered cards, `?page=N` pagination). Both are
 listing-only for now (no detail enrichment), like EPADS.
 
+Same day, added Pakistan Railways (`www.pakrail.gov.pk/Tenders/index.aspx`,
+robots.txt 404, server-rendered table, `?pno=N` pagination of 50, newest
+first; identifies by the `TenderDetails.aspx?ID=` number as `PRL-*`).
+Also researched but deferred: Punjab PPRA active-procurement portal
+(`eproc.punjab.gov.pk/activetenders.aspx`) - the content is a plain
+server-rendered, actively updated grid, but its TLS layer drops
+automated clients (Python `requests` and native `curl` both fail with
+SSLError / SEC_E_INVALID_TOKEN), so reliable CI collection is not
+possible today; Punjab entities remain covered through the federal
+PPRA EPMS. No public Balochistan PRA tender-listing portal was found;
+Balochistan entities publish through the federal EPMS/EPADS.
+
 ## Quality tooling
 
 CI runs three gates (`ci.yml`): `ruff check collector scripts`
