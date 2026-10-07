@@ -1,11 +1,16 @@
 /**
- * Typed read-only client for the TenderScout API (Stage 6 endpoints).
+ * Typed read-only client for the TenderScout API (Stage 6/9 endpoints).
  *
  * Every function only performs GET requests; there are no write paths
  * in the UI, matching the API's read-only contract.
  */
 
 import type {
+  AiAnalysis,
+  AiDedupResult,
+  AiRfpDraft,
+  DuplicateLink,
+  NotificationsPage,
   OpportunityDetail,
   OpportunityPage,
   SearchPage,
@@ -43,6 +48,23 @@ async function requestJson<T>(path: string, signal?: AbortSignal): Promise<T> {
   return (await response.json()) as T;
 }
 
+async function requestJsonPost<T>(
+  path: string,
+  body: unknown,
+  signal?: AbortSignal,
+): Promise<T> {
+  const response = await fetch(`${API_BASE}${path}`, {
+    method: "POST",
+    headers: { Accept: "application/json", "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+    signal,
+  });
+  if (!response.ok) {
+    throw new ApiError(response.status, await extractDetail(response));
+  }
+  return (await response.json()) as T;
+}
+
 /** Best-effort extraction of FastAPI's {"detail": ...} error body. */
 async function extractDetail(response: Response): Promise<string> {
   try {
@@ -60,11 +82,11 @@ async function extractDetail(response: Response): Promise<string> {
 }
 
 function queryString(
-  params: Record<string, string | number | undefined>,
+  params: Record<string, string | number | boolean | undefined>,
 ): string {
   const search = new URLSearchParams();
   for (const [key, value] of Object.entries(params)) {
-    if (value !== undefined) {
+    if (value !== undefined && value !== "") {
       search.set(key, String(value));
     }
   }
@@ -79,6 +101,26 @@ export interface ListParams {
   sourceId?: number;
   /** Keep rows whose location contains this text (city filter). */
   location?: string;
+  /** Exact stored category, case-insensitive (facet value). */
+  category?: string;
+  /** Keep rows whose organization contains this text. */
+  organization?: string;
+  /** Exact stored province, case-insensitive (facet value). */
+  province?: string;
+  /** Exact stored procurement type, case-insensitive (facet value). */
+  procurementType?: string;
+  /** newest = insertion order; closing = soonest deadline first. */
+  sort?: "newest" | "closing";
+  /** Show every duplicate listing instead of one row per notice. */
+  includeDuplicates?: boolean;
+  /** Only deadlines strictly before this ISO datetime. */
+  deadlineBefore?: string;
+  /** Only deadlines strictly after this ISO datetime. */
+  deadlineAfter?: string;
+  /** Inclusive lower bound on the deadline's date (YYYY-MM-DD). */
+  deadlineFrom?: string;
+  /** Inclusive upper bound on the deadline's date (YYYY-MM-DD). */
+  deadlineTo?: string;
 }
 
 /** Newest-first page of opportunities. */
@@ -92,6 +134,16 @@ export function listOpportunities(
       offset: params.offset,
       source_id: params.sourceId,
       location: params.location,
+      category: params.category,
+      organization: params.organization,
+      province: params.province,
+      procurement_type: params.procurementType,
+      sort: params.sort,
+      include_duplicates: params.includeDuplicates,
+      deadline_before: params.deadlineBefore,
+      deadline_after: params.deadlineAfter,
+      deadline_from: params.deadlineFrom,
+      deadline_to: params.deadlineTo,
     })}`,
     signal,
   );
@@ -105,10 +157,21 @@ export function getOpportunity(
   return requestJson<OpportunityDetail>(`/opportunities/${id}`, signal);
 }
 
+/** Other sources carrying the same notice (siblings of one duplicate group). */
+export function getDuplicates(
+  id: number,
+  signal?: AbortSignal,
+): Promise<DuplicateLink[]> {
+  return requestJson<DuplicateLink[]>(`/opportunities/${id}/duplicates`, signal);
+}
+
 /** FTS5 full-text search (bm25-ranked; lower rank = better). */
 export function searchOpportunities(
   query: string,
-  params: ListParams = {},
+  params: Pick<
+    ListParams,
+    "limit" | "offset" | "includeDuplicates"
+  > = {},
   signal?: AbortSignal,
 ): Promise<SearchPage> {
   return requestJson<SearchPage>(
@@ -116,7 +179,20 @@ export function searchOpportunities(
       q: query,
       limit: params.limit,
       offset: params.offset,
+      include_duplicates: params.includeDuplicates,
     })}`,
+    signal,
+  );
+}
+
+/** "New tenders" and "closing soon" buckets for the notifications UI. */
+export function getNotifications(
+  windowDays: number,
+  limit = 50,
+  signal?: AbortSignal,
+): Promise<NotificationsPage> {
+  return requestJson<NotificationsPage>(
+    `/notifications${queryString({ window_days: windowDays, limit })}`,
     signal,
   );
 }
@@ -129,4 +205,57 @@ export function listSources(signal?: AbortSignal): Promise<Source[]> {
 /** Distinct location strings currently in the database (city filter facet). */
 export function listLocations(signal?: AbortSignal): Promise<string[]> {
   return requestJson<string[]>("/locations", signal);
+}
+
+/** Distinct stored categories (category filter facet). */
+export function listCategories(signal?: AbortSignal): Promise<string[]> {
+  return requestJson<string[]>("/categories", signal);
+}
+
+/** Distinct stored provinces (province filter facet). */
+export function listProvinces(signal?: AbortSignal): Promise<string[]> {
+  return requestJson<string[]>("/provinces", signal);
+}
+
+/** Distinct stored procurement types (procurement_type filter facet). */
+export function listProcurementTypes(signal?: AbortSignal): Promise<string[]> {
+  return requestJson<string[]>("/procurement_types", signal);
+}
+
+/** Deterministic analysis (+ LLM summary when a key is configured). */
+export function aiAnalyze(
+  opportunityId: number,
+  signal?: AbortSignal,
+): Promise<AiAnalysis> {
+  return requestJsonPost<AiAnalysis>(`/ai/analyze/${opportunityId}`, {}, signal);
+}
+
+/** Verify a candidate duplicate group really is one tender. */
+export function aiDedup(
+  opportunityIds: number[],
+  signal?: AbortSignal,
+): Promise<AiDedupResult> {
+  return requestJsonPost<AiDedupResult>(
+    "/ai/dedup",
+    { opportunity_ids: opportunityIds },
+    signal,
+  );
+}
+
+/** Draft a bid/RFP document for one tender (needs an LLM key). */
+export function aiGenerateRfp(
+  opportunityId: number,
+  companyName: string,
+  capabilities: string[],
+  signal?: AbortSignal,
+): Promise<AiRfpDraft> {
+  return requestJsonPost<AiRfpDraft>(
+    "/ai/rfp",
+    {
+      opportunity_id: opportunityId,
+      company_name: companyName,
+      capabilities,
+    },
+    signal,
+  );
 }

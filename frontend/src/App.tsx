@@ -1,8 +1,11 @@
-import { useEffect, useState, type ChangeEvent } from "react";
+import { useEffect, useState } from "react";
 import {
   ApiError,
+  listCategories,
   listLocations,
   listOpportunities,
+  listProcurementTypes,
+  listProvinces,
   listSources,
   searchOpportunities,
 } from "./api";
@@ -11,8 +14,48 @@ import { OpportunityDetail } from "./components/OpportunityDetail";
 import { OpportunityTable, type TableRow } from "./components/OpportunityTable";
 import { Pagination } from "./components/Pagination";
 import { SearchBar } from "./components/SearchBar";
+import { FilterBar, type FilterValues } from "./components/FilterBar";
+import { EMPTY_FILTERS } from "./components/FilterBar";
+import { NavBar, type PageName } from "./components/NavBar";
+import { NotificationsPage } from "./pages/NotificationsPage";
+import { SourcesPage } from "./pages/SourcesPage";
 
 const PAGE_SIZE = 20;
+
+type Route =
+  | { page: "tenders" }
+  | { page: "detail"; id: number }
+  | { page: "notifications" }
+  | { page: "sources" };
+
+/** Hash-based routing: #/tenders, #/tender/:id, #/notifications, #/sources. */
+function parseHash(hash: string): Route {
+  const path = hash.replace(/^#/, "") || "/";
+  if (path === "/tenders" || path === "/") {
+    return { page: "tenders" };
+  }
+  const detailMatch = path.match(/^\/tender\/(\d+)$/);
+  if (detailMatch) {
+    return { page: "detail", id: Number(detailMatch[1]) };
+  }
+  if (path.startsWith("/notifications")) {
+    return { page: "notifications" };
+  }
+  if (path.startsWith("/sources")) {
+    return { page: "sources" };
+  }
+  return { page: "tenders" };
+}
+
+function pageName(route: Route): PageName {
+  if (route.page === "notifications") {
+    return "notifications";
+  }
+  if (route.page === "sources") {
+    return "sources";
+  }
+  return "home";
+}
 
 function toRow(opportunity: Opportunity): TableRow {
   return {
@@ -39,29 +82,51 @@ function hitToRow(hit: SearchHit): TableRow {
 }
 
 /**
- * Single-page read-only UI over the TenderScout API: browse the
- * newest-first list, filter by source, run FTS5 searches and open a
- * detail view. The visible mode is derived from state: a non-empty
- * search query switches the list to search results, and a selected id
- * switches to the detail view (Back restores the exact previous list).
+ * Multi-page read-only UI over the TenderScout API. Hash routes keep the
+ * tenders list, its filters and pagination alive while the user peeks at a
+ * detail page, the notification feeds or the sources list and then comes
+ * back. A non-empty search query switches the list to FTS5 results
+ * (filters pause; the /search endpoint has no filter parameters yet).
  */
 export default function App() {
+  const [route, setRoute] = useState<Route>(() => parseHash(window.location.hash));
   const [sources, setSources] = useState<Source[]>([]);
-  const [sourceId, setSourceId] = useState<number | null>(null);
   const [locations, setLocations] = useState<string[]>([]);
-  const [locationFilter, setLocationFilter] = useState<string>("");
+  const [categories, setCategories] = useState<string[]>([]);
+  const [provinces, setProvinces] = useState<string[]>([]);
+  const [procurementTypes, setProcurementTypes] = useState<string[]>([]);
+  const [filters, setFilters] = useState<FilterValues>(EMPTY_FILTERS);
   const [searchInput, setSearchInput] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
   const [offset, setOffset] = useState(0);
-  const [selectedId, setSelectedId] = useState<number | null>(null);
   const [rows, setRows] = useState<TableRow[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // The source filter is optional chrome: if /sources fails, browsing
-  // still works (the main data effect surfaces real API errors). Same
-  // for the city facet - an unavailable facet just hides the dropdown.
+  useEffect(() => {
+    const onHashChange = () => {
+      setRoute(parseHash(window.location.hash));
+      window.scrollTo(0, 0);
+    };
+    window.addEventListener("hashchange", onHashChange);
+    return () => window.removeEventListener("hashchange", onHashChange);
+  }, []);
+
+  function navigate(hash: string) {
+    if (window.location.hash === hash) {
+      window.scrollTo(0, 0);
+      return;
+    }
+    window.location.hash = hash;
+  }
+
+  function openDetail(id: number) {
+    navigate(`#/tender/${id}`);
+  }
+
+  // Facets are optional chrome: if a facet endpoint fails, browsing still
+  // works (the main data effect surfaces real API errors).
   useEffect(() => {
     const controller = new AbortController();
     listSources(controller.signal)
@@ -70,11 +135,20 @@ export default function App() {
     listLocations(controller.signal)
       .then(setLocations)
       .catch(() => setLocations([]));
+    listCategories(controller.signal)
+      .then(setCategories)
+      .catch(() => setCategories([]));
+    listProvinces(controller.signal)
+      .then(setProvinces)
+      .catch(() => setProvinces([]));
+    listProcurementTypes(controller.signal)
+      .then(setProcurementTypes)
+      .catch(() => setProcurementTypes([]));
     return () => controller.abort();
   }, []);
 
   useEffect(() => {
-    if (selectedId !== null) {
+    if (route.page !== "tenders") {
       return;
     }
     const controller = new AbortController();
@@ -91,8 +165,16 @@ export default function App() {
       : listOpportunities(
           {
             ...params,
-            sourceId: sourceId ?? undefined,
-            location: locationFilter || undefined,
+            sourceId: filters.sourceId ?? undefined,
+            location: filters.location || undefined,
+            category: filters.category || undefined,
+            organization: filters.organization || undefined,
+            province: filters.province || undefined,
+            procurementType: filters.procurementType || undefined,
+            sort: filters.sort,
+            includeDuplicates: filters.includeDuplicates || undefined,
+            deadlineFrom: filters.deadlineFrom || undefined,
+            deadlineTo: filters.deadlineTo || undefined,
           },
           controller.signal,
         ).then((page) => {
@@ -122,13 +204,17 @@ export default function App() {
         }
       });
     return () => controller.abort();
-  }, [searchQuery, offset, sourceId, locationFilter, selectedId]);
+  }, [route.page, searchQuery, offset, filters]);
+
+  function handleFiltersChange(next: FilterValues) {
+    setFilters(next);
+    setOffset(0);
+  }
 
   function handleSubmitSearch(query: string) {
     setSearchInput(query);
     setSearchQuery(query);
     setOffset(0);
-    setSelectedId(null);
   }
 
   function handleClearSearch() {
@@ -137,84 +223,77 @@ export default function App() {
     setOffset(0);
   }
 
-  function handleSourceChange(event: ChangeEvent<HTMLSelectElement>) {
-    const value = event.target.value;
-    setSourceId(value === "" ? null : Number(value));
-    setOffset(0);
-  }
-
-  function handleLocationChange(event: ChangeEvent<HTMLSelectElement>) {
-    setLocationFilter(event.target.value);
-    setOffset(0);
-  }
-
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100">
-      <header className="border-b border-slate-800 px-6 py-5">
-        <div className="mx-auto max-w-6xl">
-          <div className="flex items-baseline gap-3">
-            <h1 className="text-2xl font-bold tracking-tight">
-              TenderScout AI
-            </h1>
-            <span className="rounded-full border border-slate-700 px-2 py-0.5 text-xs text-slate-400">
-              read-only
-            </span>
-          </div>
-          <p className="mt-1 text-sm text-slate-400">
-            Verified public procurement opportunities in Pakistan.
-          </p>
-        </div>
-      </header>
+      <NavBar page={pageName(route)} onNavigate={navigate} />
       <main className="mx-auto max-w-6xl px-6 py-6">
-        {selectedId !== null ? (
+        {route.page === "detail" ? (
           <OpportunityDetail
-            id={selectedId}
-            onBack={() => setSelectedId(null)}
+            id={route.id}
+            onBack={() => navigate("#/tenders")}
           />
+        ) : route.page === "notifications" ? (
+          <NotificationsPage onSelectTender={openDetail} />
+        ) : route.page === "sources" ? (
+          <SourcesPage />
         ) : (
           <>
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-              <SearchBar
-                value={searchInput}
-                active={searchQuery !== ""}
-                onValueChange={setSearchInput}
-                onSubmit={handleSubmitSearch}
-                onClear={handleClearSearch}
+            <section className="mb-5 rounded-xl border border-slate-800 bg-gradient-to-br from-slate-900 via-slate-900 to-slate-950 p-6">
+              <h1 className="text-2xl font-bold tracking-tight text-slate-100">
+                Public tenders, one clear list
+              </h1>
+              <p className="mt-2 max-w-2xl text-sm leading-relaxed text-slate-400">
+                TenderScout AI pulls verified public procurement notices from
+                Pakistan&apos;s official portals, collapses duplicates onto one
+                record, and watches deadlines for you. Search, filter, and
+                draft bid documents from a tender&apos;s detail page.
+              </p>
+              <div className="mt-4 flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={() => navigate("#/notifications")}
+                  className="rounded-md bg-sky-600 px-4 py-2 text-sm font-medium text-white hover:bg-sky-500"
+                >
+                  View notifications
+                </button>
+                <button
+                  type="button"
+                  onClick={() => navigate("#/sources")}
+                  className="rounded-md border border-slate-700 px-4 py-2 text-sm text-slate-300 hover:bg-slate-800"
+                >
+                  See sources
+                </button>
+              </div>
+            </section>
+            <SearchBar
+              value={searchInput}
+              active={searchQuery !== ""}
+              onValueChange={setSearchInput}
+              onSubmit={handleSubmitSearch}
+              onClear={handleClearSearch}
+            />
+            <div className="mt-3">
+              <FilterBar
+                values={filters}
+                sources={sources}
+                locations={locations}
+                categories={categories}
+                provinces={provinces}
+                procurementTypes={procurementTypes}
+                disabled={searchQuery !== ""}
+                onChange={handleFiltersChange}
               />
-              <select
-                value={sourceId ?? ""}
-                onChange={handleSourceChange}
-                disabled={searchQuery !== ""}
-                aria-label="Filter by source"
-                title="Source filter applies to browse mode only"
-                className="rounded-md border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-200 disabled:cursor-not-allowed disabled:opacity-40"
-              >
-                <option value="">All sources</option>
-                {sources.map((source) => (
-                  <option key={source.id} value={source.id}>
-                    {source.name}
-                  </option>
-                ))}
-              </select>
-              <select
-                value={locationFilter}
-                onChange={handleLocationChange}
-                disabled={searchQuery !== ""}
-                aria-label="Filter by city"
-                title="City filter applies to browse mode only"
-                className="rounded-md border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-200 disabled:cursor-not-allowed disabled:opacity-40"
-              >
-                <option value="">All cities</option>
-                {locations.map((location) => (
-                  <option key={location} value={location}>
-                    {location}
-                  </option>
-                ))}
-              </select>
             </div>
             {searchQuery ? (
               <p className="mt-4 text-sm text-slate-400">
-                Search results for “{searchQuery}”
+                Search results for “{searchQuery}” · filters are paused in
+                search mode
+              </p>
+            ) : null}
+            {!filters.includeDuplicates && !error ? (
+              <p className="mt-4 text-sm text-slate-500">
+                Duplicates are collapsed — tick “Show mirror listings” to see
+                every portal&apos;s copy.
               </p>
             ) : null}
             {error !== null ? (
@@ -229,7 +308,7 @@ export default function App() {
                 <OpportunityTable
                   rows={rows}
                   loading={loading}
-                  onSelect={setSelectedId}
+                  onSelect={openDetail}
                 />
                 <Pagination
                   offset={offset}
@@ -243,7 +322,9 @@ export default function App() {
         )}
       </main>
       <footer className="border-t border-slate-800 px-6 py-4 text-center text-xs text-slate-600">
-        Data from public PPRA EPMS pages · TenderScoutBot/0.1 · read-only API
+        Data from public PPRA EPMS, KPPRA, EPADS, AJK PPRA, GB PPRA, Pakistan
+        Railways, PIA, SPPRA Sindh and Punjab eProcurement pages ·
+        TenderScoutBot/0.1 · read-only API
       </footer>
     </div>
   );

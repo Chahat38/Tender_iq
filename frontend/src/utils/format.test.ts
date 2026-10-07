@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { deadlineStatus, formatDateTime } from "./format";
+import { daysUntil, deadlineStatus, formatDateTime } from "./format";
 
 describe("formatDateTime", () => {
   it("renders null, undefined and blank values as an em dash", () => {
@@ -58,5 +58,29 @@ describe("deadlineStatus", () => {
       label: "45 days left",
       tone: "ok",
     });
+  });
+});
+
+describe("daysUntil", () => {
+  const now = new Date("2026-10-06T12:00:00Z");
+
+  it("returns whole 24h periods, floored", () => {
+    expect(daysUntil("2026-10-09T11:00:00Z", now)).toBe(2);
+    expect(daysUntil("2026-11-20T11:00:00Z", now)).toBe(44);
+  });
+
+  it("is null for missing, blank or unparseable dates", () => {
+    expect(daysUntil(null, now)).toBeNull();
+    expect(daysUntil(undefined, now)).toBeNull();
+    expect(daysUntil("   ", now)).toBeNull();
+    expect(daysUntil("whenever", now)).toBeNull();
+  });
+
+  it("is zero when the deadline is still later today", () => {
+    expect(daysUntil("2026-10-06T13:00:00Z", now)).toBe(0);
+  });
+
+  it("is negative once the deadline has passed", () => {
+    expect(daysUntil("2026-10-05T11:00:00Z", now)).toBe(-2);
   });
 });
