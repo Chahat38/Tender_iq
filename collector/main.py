@@ -176,6 +176,18 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="run the user-facing alert worker and exit (also runs after "
         "every collection)",
     )
+    parser.add_argument(
+        "--prune-expired",
+        action="store_true",
+        help="after this collection run, delete opportunities whose "
+        "deadline has already passed and rebuild the search index",
+    )
+    parser.add_argument(
+        "--prune-only",
+        action="store_true",
+        help="standalone: delete expired opportunities and rebuild the "
+        "search index, then exit",
+    )
     args = parser.parse_args(argv)
     if args.search is not None and args.rebuild_index:
         parser.error("--search and --rebuild-index are mutually exclusive")
@@ -185,6 +197,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--analyze-only": args.analyze_only,
         "--match-user": args.match_user is not None,
         "--alerts-only": args.alerts_only,
+        "--prune-only": args.prune_only,
     }
     if sum(bool(value) for value in exclusive.values()) > 1:
         parser.error(
@@ -323,6 +336,32 @@ def main(argv: list[str] | None = None) -> int:
         finally:
             storage.close()
 
+    # ------------------- expired cleanup (standalone) -------------------
+    if args.prune_only:
+        if not isinstance(storage, Storage):
+            print(
+                "error: --prune-only runs against the SQLite database "
+                "only (unset DATABASE_URL or pass --db)",
+                file=sys.stderr,
+            )
+            storage.close()
+            return 2
+        try:
+            removed = storage.prune_expired()
+            indexed = 0
+            try:
+                indexed = SearchIndex(storage).rebuild()
+            except (RuntimeError, sqlite3.DatabaseError) as exc:
+                print(f"warning: could not rebuild the search index ({exc})")
+            print(
+                "Prune:     "
+                f"deleted {removed} expired opportunity(s); "
+                f"index rebuilt ({indexed} row(s))."
+            )
+            return 0
+        finally:
+            storage.close()
+
     try:
         adapter = ADAPTERS[args.adapter](offline=args.offline)
         try:
@@ -377,6 +416,20 @@ def main(argv: list[str] | None = None) -> int:
             f"(match {alert_report['new_match']}, "
             f"deadline {alert_report['deadline_approaching']})"
         )
+        if args.prune_expired:
+            removed = storage.prune_expired()
+            if removed:
+                try:
+                    indexed = SearchIndex(storage).rebuild()
+                    print(
+                        "Prune:     "
+                        f"deleted {removed} expired opportunity(s); "
+                        f"index rebuilt ({indexed} row(s))."
+                    )
+                except (RuntimeError, sqlite3.DatabaseError) as exc:
+                    print(f"warning: could not rebuild the search index ({exc})")
+            else:
+                print("Prune:     no expired opportunities to delete.")
         _warn_if_index_out_of_sync(storage)
         return 0 if result.failed == 0 else 1
     finally:

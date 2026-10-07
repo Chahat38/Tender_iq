@@ -1189,6 +1189,40 @@ class Storage:
         ).fetchone()
         return int(row["n"])
 
+    def prune_expired(self, now: datetime | None = None) -> int:
+        """Delete opportunities whose deadline has passed.
+
+        Deadlines are stored as ISO strings (usually with a UTC offset
+        from the adapters); naive values are treated as Karachi local
+        time (UTC+5) so a date-only deadline counts as the close of that
+        local day. Rows without a deadline are kept. Dependent rows are
+        removed by ``ON DELETE CASCADE``; callers should rebuild the
+        FTS5 index afterwards.
+        """
+        now = now or datetime.now(timezone.utc)
+        expired_ids: list[int] = []
+        for row in self.conn.execute(
+            "SELECT id, deadline FROM opportunities WHERE deadline IS NOT NULL"
+        ):
+            deadline = row["deadline"]
+            try:
+                parsed = datetime.fromisoformat(str(deadline))
+            except ValueError:
+                continue
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=timezone(timedelta(hours=5)))
+            if parsed.astimezone(timezone.utc) <= now:
+                expired_ids.append(row["id"])
+        for chunk_start in range(0, len(expired_ids), 500):
+            chunk = expired_ids[chunk_start : chunk_start + 500]
+            placeholders = ",".join("?" for _ in chunk)
+            self.conn.execute(
+                f"DELETE FROM opportunities WHERE id IN ({placeholders})", chunk
+            )
+        if expired_ids:
+            self.conn.commit()
+        return len(expired_ids)
+
     def count_sources(self) -> int:
         """Return the total number of registered sources."""
         row = self.conn.execute("SELECT COUNT(*) AS n FROM sources").fetchone()
