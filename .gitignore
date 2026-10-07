@@ -1,4 +1,4 @@
-# TenderScout AI - files that never belong in version control.
+﻿# TenderScout AI - files that never belong in version control.
 
 # Python bytecode and caches
 __pycache__/
@@ -16,3 +16,10 @@ __pycache__/
 
 # Node (React front end, later stages)
 node_modules/
+
+
+
+.vercel/
+
+# Vercel CLI local project link
+.vercel/
