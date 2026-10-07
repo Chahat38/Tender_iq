@@ -109,6 +109,24 @@ SELECT COUNT(*) AS n
 """
 
 
+def _scoped(sql: str, primary_only: bool) -> str:
+    """Insert the primary-row clause into a search SQL statement.
+
+    ``is_primary`` only exists on ``opportunities`` (the joined content
+    table), so the unqualified reference is unambiguous; ``search_fts``
+    has no such column.
+
+    The template SQLs place the MATCH condition on their own line
+    (prefix ``         WHERE search_fts MATCH ?\n``), so the clause is
+    appended to the WHERE block instead of the LIMIT/OFFSET tail.
+    """
+    if not primary_only:
+        return sql
+    return sql.replace(
+        "WHERE search_fts MATCH ?", "WHERE search_fts MATCH ? AND is_primary = 1", 1
+    )
+
+
 @dataclass
 class SearchResult:
     """One ranked hit from :meth:`SearchIndex.search`.
@@ -234,18 +252,21 @@ class SearchIndex:
         ).fetchone()
         return int(row["n"])
 
-    def count(self, user_query: str) -> int:
+    def count(self, user_query: str, primary_only: bool = True) -> int:
         """Return how many stored opportunities match ``user_query``.
 
         Same strict query translation as :meth:`search` (tokens are
         quoted and ANDed, the last token matches as a prefix) but no
         ranking or snippet work. Queries without word tokens match
         nothing and return 0. The API uses this for ``total`` counts.
+        ``primary_only`` (default) counts non-duplicate rows only.
         """
         fts_query = _fts_query_from(user_query)
         if fts_query is None:
             return 0
-        row = self.conn.execute(_COUNT_SQL, (fts_query,)).fetchone()
+        row = self.conn.execute(
+            _scoped(_COUNT_SQL, primary_only), (fts_query,)
+        ).fetchone()
         return int(row["n"])
 
     # ------------------------------------------------------------------
@@ -253,7 +274,8 @@ class SearchIndex:
     # ------------------------------------------------------------------
 
     def search(
-        self, user_query: str, limit: int = 20, offset: int = 0
+        self, user_query: str, limit: int = 20, offset: int = 0, *,
+        primary_only: bool = True,
     ) -> list[SearchResult]:
         """Search stored opportunities; best matches first.
 
@@ -261,7 +283,8 @@ class SearchIndex:
         AND) and the last word matches as a prefix. Queries without word
         tokens return no results. ``limit`` is clamped to
         [0, 200]; ``offset`` pages through results. Negative
-        ``limit``/``offset`` raise ``ValueError``.
+        ``limit``/``offset`` raise ``ValueError``. ``primary_only``
+        (default) returns non-duplicate rows only.
         """
         fts_query = _fts_query_from(user_query)
         if fts_query is None:
@@ -273,7 +296,9 @@ class SearchIndex:
         limit = min(limit, _RESULT_LIMIT_MAX)
         if limit == 0:
             return []
-        rows = self.conn.execute(_ROW_SQL, (fts_query, limit, offset)).fetchall()
+        rows = self.conn.execute(
+            _scoped(_ROW_SQL, primary_only), (fts_query, limit, offset)
+        ).fetchall()
         return [self._row_to_result(row) for row in rows]
 
     @staticmethod

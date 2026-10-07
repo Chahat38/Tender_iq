@@ -42,6 +42,8 @@ from adapters.kppra import KppraActiveTendersAdapter  # noqa: E402
 from adapters.pakrail import PakrailAdapter  # noqa: E402
 from adapters.pia import PiaAdapter  # noqa: E402
 from adapters.ppra_epms import PPRAEpmsAdapter  # noqa: E402
+from adapters.punjab_eproc import PunjabEprocAdapter  # noqa: E402
+from adapters.sindh_sppra import SindhSppraAdapter  # noqa: E402
 from ai import run_analysis, run_matching  # noqa: E402
 from alerts import run as run_alerts  # noqa: E402
 from compliance import ComplianceError  # noqa: E402
@@ -60,6 +62,8 @@ ADAPTERS = {
     "gb_ppra": GbPpraAdapter,
     "pakrail": PakrailAdapter,
     "pia": PiaAdapter,
+    "sindh_sppra": SindhSppraAdapter,
+    "punjab_eproc": PunjabEprocAdapter,
 }
 
 

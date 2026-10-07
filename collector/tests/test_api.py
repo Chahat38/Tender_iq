@@ -10,10 +10,11 @@ import json as jsonlib
 from datetime import datetime, timezone
 
 import pytest
-from api import FtsUnavailableError, create_app
 from fastapi.testclient import TestClient
 from models import NormalizedOpportunity
 from search import SearchIndex
+
+from api import FtsUnavailableError, create_app
 
 
 def make_opportunity(**overrides) -> NormalizedOpportunity:
@@ -434,16 +435,24 @@ class TestConcurrency:
 
 
 class TestReadOnly:
+    #: The /ai/* endpoints take JSON bodies (POST) but are stateless
+    #: compute - they never write to the database, so the read-only
+    #: contract is unaffected (same carve-out as /opportunities/query).
+    _AI_POST_PATHS = {"/ai/analyze/{opportunity_id}", "/ai/dedup", "/ai/rfp"}
+
     def test_no_write_methods_are_registered(self, harness) -> None:
         routes = {
             getattr(route, "path", None): getattr(route, "methods", set())
             for route in harness.client.app.routes
         }
         for path, methods in routes.items():
-            if path and path != "/opportunities/query":
-                assert not (methods & {"POST", "PUT", "PATCH", "DELETE"}), (
-                    f"{path} must not accept mutating methods"
-                )
+            if not path:
+                continue
+            if path in self._AI_POST_PATHS or path == "/opportunities/query":
+                continue
+            assert not (methods & {"POST", "PUT", "PATCH", "DELETE"}), (
+                f"{path} must not accept mutating methods"
+            )
 
     def test_unknown_route_is_404(self, harness) -> None:
         response = harness.client.post("/opportunities", json={})

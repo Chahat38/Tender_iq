@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import os
 import sqlite3
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from uuid import uuid4
@@ -1156,17 +1156,33 @@ class Storage:
         deadline_before: datetime | None = None,
         deadline_after: Any = NULL_DEADLINE_FILTER,
         location: str | None = None,
+        category: str | None = None,
+        organization: str | None = None,
+        province: str | None = None,
+        deadline_from: str | None = None,
+        deadline_to: str | None = None,
+        primary_only: bool = True,
+        procurement_type: str | None = None,
     ) -> int:
         """Count opportunities matching the list_opportunities filters.
 
         Called without arguments this is the plain total row count
-        (the pre-Stage-6 behavior and call sites keep working).
+        (the pre-Stage-6 behavior and call sites keep working). When
+        ``primary_only`` is True (default) duplicates are excluded, so
+        the count matches what the list endpoint shows.
         """
         clause, params = self._opportunity_filter_clause(
             source_id=source_id,
             deadline_before=deadline_before,
             deadline_after=deadline_after,
             location=location,
+            category=category,
+            organization=organization,
+            province=province,
+            deadline_from=deadline_from,
+            deadline_to=deadline_to,
+            primary_only=primary_only,
+            procurement_type=procurement_type,
         )
         row = self.conn.execute(
             f"SELECT COUNT(*) AS n FROM opportunities{clause}", params
@@ -1190,11 +1206,22 @@ class Storage:
         deadline_before: datetime | None = None,
         deadline_after: Any = NULL_DEADLINE_FILTER,
         location: str | None = None,
+        category: str | None = None,
+        organization: str | None = None,
+        province: str | None = None,
+        deadline_from: str | None = None,
+        deadline_to: str | None = None,
+        primary_only: bool = True,
+        procurement_type: str | None = None,
+        sort: str = "newest",
     ) -> list[dict[str, Any]]:
-        """Return a page of opportunities, newest first, as plain dicts.
+        """Return a page of opportunities as plain dicts.
 
-        Ordered by ``id`` descending (insertion order = crawl order, so
-        the newest rows are the most recently discovered tenders).
+        By default only primary rows are returned (``primary_only``) -
+        the same notice found on several sources shows once, under the
+        source that reported it first - and rows are ordered newest
+        first (``sort`` ``"newest"``). ``sort="closing"`` orders by
+        earliest deadline (undated rows last, ties newest first).
         ``limit`` is clamped to [0, :data:`_API_RESULT_LIMIT_MAX`] and
         negative ``limit``/``offset`` raise ``ValueError`` (the same
         contract as :meth:`search.SearchIndex.search`).
@@ -1205,6 +1232,13 @@ class Storage:
         * ``location`` keeps rows whose location contains the given
           text, case-insensitively (a loose match - scraped location
           strings are free text, not a controlled vocabulary),
+        * ``category`` / ``province`` keep rows whose stored value
+          matches case-insensitively (exact value after lower()),
+        * ``procurement_type`` keeps rows whose stored procurement type
+          matches case-insensitively (use
+          :meth:`list_distinct_procurement_types` for valid values),
+        * ``organization`` keeps rows whose organization contains the
+          given text, case-insensitively (loose, like ``location``),
         * ``deadline_before`` / ``deadline_after`` keep rows whose
           deadline (an ISO-8601 string, so string comparison works) is
           strictly inside the window. By default the window's end is
@@ -1212,7 +1246,13 @@ class Storage:
           the sentinel meaning "no lower bound"), so tenders without a
           deadline are NOT silently hidden. Pass a real datetime to
           exclude undated rows; pass the ``NO_DEADLINE`` sentinel to
-          hide them while keeping an open lower bound.
+          hide them while keeping an open lower bound,
+        * ``deadline_from`` / ``deadline_to`` are the UI-facing
+          date-only window (``YYYY-MM-DD``), inclusive on both ends and
+          compared against the first ten characters of the stored ISO
+          deadline - the deadline's Pakistan-local date. When either
+          bound is given, rows without a deadline drop out (the range
+          is meaningless for them).
         """
         limit = int(limit)
         offset = int(offset)
@@ -1225,10 +1265,23 @@ class Storage:
             deadline_before=deadline_before,
             deadline_after=deadline_after,
             location=location,
+            category=category,
+            organization=organization,
+            province=province,
+            deadline_from=deadline_from,
+            deadline_to=deadline_to,
+            primary_only=primary_only,
+            procurement_type=procurement_type,
         )
+        if sort == "closing":
+            # Earliest deadline first; undated rows last; ties newest
+            # first so recently discovered tenders surface within a day.
+            order_by = "(deadline IS NULL) ASC, deadline ASC, id DESC"
+        else:
+            order_by = "id DESC"
         rows = self.conn.execute(
             f"SELECT * FROM opportunities{clause} "
-            "ORDER BY id DESC LIMIT ? OFFSET ?",
+            f"ORDER BY {order_by} LIMIT ? OFFSET ?",
             (*params, limit, offset),
         ).fetchall()
         return [dict(row) for row in rows]
@@ -1239,12 +1292,23 @@ class Storage:
         deadline_before: datetime | None,
         deadline_after: Any,
         location: str | None = None,
+        category: str | None = None,
+        organization: str | None = None,
+        province: str | None = None,
+        deadline_from: str | None = None,
+        deadline_to: str | None = None,
+        primary_only: bool = True,
+        procurement_type: str | None = None,
     ) -> tuple[str, list[Any]]:
         """Build the WHERE clause shared by list_opportunities and
         count_opportunities so both always filter identically.
 
-        ``location`` uses ``LIKE`` (ASCII case-insensitive) around the
-        given substring; it is bounded to keep the pattern honest.
+        ``location``/``organization`` use ``LIKE`` (ASCII
+        case-insensitive) around the given substring; they are bounded
+        to keep the pattern honest. ``category``/``province`` are
+        facet-style exact matches after ``lower()`` (their facet values
+        come from :meth:`list_distinct_categories` /
+        :meth:`list_distinct_provinces`, which are already lowercased).
         ``deadline_after`` uses the :data:`NULL_DEADLINE_FILTER` sentinel
         for "no lower bound"; ``None`` hides rows without a deadline.
         """
@@ -1253,9 +1317,25 @@ class Storage:
         if source_id is not None:
             where.append("source_id = ?")
             params.append(source_id)
+        if deadline_from:
+            # Date-only inclusive lower bound on the deadline's local date.
+            where.append("deadline IS NOT NULL AND substr(deadline, 1, 10) >= ?")
+            params.append(deadline_from)
+        if deadline_to:
+            where.append("deadline IS NOT NULL AND substr(deadline, 1, 10) <= ?")
+            params.append(deadline_to)
         if location:
             where.append("location LIKE ?")
             params.append(f"%{location}%")
+        if category:
+            where.append("category IS NOT NULL AND lower(category) = ?")
+            params.append(category.lower())
+        if organization:
+            where.append("organization LIKE ?")
+            params.append(f"%{organization}%")
+        if province:
+            where.append("province IS NOT NULL AND lower(province) = ?")
+            params.append(province.lower())
         if deadline_before is not None:
             where.append("deadline IS NOT NULL AND deadline < ?")
             params.append(_db_value(deadline_before))
@@ -1268,6 +1348,17 @@ class Storage:
                     "(deadline IS NOT NULL AND deadline > ?)"
                 )
                 params.append(_db_value(deadline_after))
+        if primary_only:
+            # One listed tender per notice even when the collector
+            # found the same notice on several sources (the primary row
+            # is the source that saw it first).
+            where.append("is_primary = 1")
+        if procurement_type:
+            where.append(
+                "procurement_type IS NOT NULL AND "
+                "lower(procurement_type) = lower(?)"
+            )
+            params.append(procurement_type)
         clause = f" WHERE {' AND '.join(where)}" if where else ""
         return clause, params
 
@@ -1287,10 +1378,118 @@ class Storage:
         ).fetchall()
         return [str(row["location"]) for row in rows]
 
+    def list_distinct_categories(self) -> list[str]:
+        """Every distinct non-empty category, lowercased and sorted.
+
+        Fed directly into the API's category facet; like the location
+        facet the values are opaque scraped labels collapsed
+        case-insensitively (never parsed by the frontend).
+        """
+        rows = self.conn.execute(
+            "SELECT DISTINCT lower(category) AS category FROM opportunities "
+            "WHERE category IS NOT NULL AND category <> '' "
+            "ORDER BY category"
+        ).fetchall()
+        return [str(row["category"]) for row in rows]
+
+    def list_distinct_provinces(self) -> list[str]:
+        """Every distinct non-empty province, lowercased and sorted.
+
+        Province is written by each adapter (``Sindh``, ``Punjab``, ...)
+        so the facet is a small controlled vocabulary; the lowercase
+        form matches the ``province`` filter's exact comparison.
+        """
+        rows = self.conn.execute(
+            "SELECT DISTINCT lower(province) AS province FROM opportunities "
+            "WHERE province IS NOT NULL AND province <> '' "
+            "ORDER BY province"
+        ).fetchall()
+        return [str(row["province"]) for row in rows]
+
     def list_sources(self) -> list[dict[str, Any]]:
         """Return every registered source row as a plain dict."""
         rows = self.conn.execute(
             "SELECT * FROM sources ORDER BY id"
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def list_distinct_procurement_types(self) -> list[str]:
+        """Every distinct non-empty procurement type, most common first.
+
+        Values are the raw scraped labels (``Works``, ``Tender Notice``,
+        ...) so the frontend treats them as opaque facet labels; the
+        ``procurement_type`` filter compares case-insensitively.
+        """
+        rows = self.conn.execute(
+            "SELECT procurement_type AS label, COUNT(*) AS n "
+            "FROM opportunities "
+            "WHERE procurement_type IS NOT NULL AND procurement_type <> '' "
+            "GROUP BY lower(procurement_type) "
+            "ORDER BY n DESC, label"
+        ).fetchall()
+        return [str(row["label"]) for row in rows]
+
+    def list_duplicates(self, opportunity_id: int) -> list[dict[str, Any]]:
+        """Sibling rows in the same duplicate group, newest first.
+
+        The opportunity itself is excluded; rows not in a group (or an
+        unknown id) answer an empty list. Each row is the light
+        projection used by the UI's "also listed on" panel.
+        """
+        group_row = self.conn.execute(
+            "SELECT duplicate_group_id FROM opportunities WHERE id = ?",
+            (opportunity_id,),
+        ).fetchone()
+        if group_row is None or group_row["duplicate_group_id"] is None:
+            return []
+        rows = self.conn.execute(
+            "SELECT id, source_id, source_name, title, organization, "
+            "deadline, source_url, is_primary FROM opportunities "
+            "WHERE duplicate_group_id = ? AND id <> ? "
+            "ORDER BY first_seen_at, id",
+            (group_row["duplicate_group_id"], opportunity_id),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def list_new_tenders(
+        self, days: int, limit: int = 50, *, now: datetime | None = None
+    ) -> list[dict[str, Any]]:
+        """Primary rows newly published within the last ``days`` days.
+
+        Ordered by publication date, newest first. ``published_at`` is
+        a stored ISO-8601 string so string comparison against the
+        computed cutoff works; undated rows are ignored.
+        """
+        now = now or datetime.now(timezone.utc)
+        cutoff = (now - timedelta(days=days)).isoformat()
+        limit = min(max(int(limit), 0), _API_RESULT_LIMIT_MAX)
+        rows = self.conn.execute(
+            "SELECT * FROM opportunities "
+            "WHERE is_primary = 1 AND published_at IS NOT NULL "
+            "AND published_at >= ? "
+            "ORDER BY published_at DESC, id DESC LIMIT ?",
+            (cutoff, limit),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def list_closing_soon(
+        self, days: int, limit: int = 50, *, now: datetime | None = None
+    ) -> list[dict[str, Any]]:
+        """Primary rows whose deadline falls within the next ``days`` days.
+
+        Ordered by deadline, soonest first (undated rows are never
+        "closing soon"). Rows whose deadline already passed drop out.
+        """
+        now = now or datetime.now(timezone.utc)
+        today = now.isoformat()
+        horizon = (now + timedelta(days=days)).isoformat()
+        limit = min(max(int(limit), 0), _API_RESULT_LIMIT_MAX)
+        rows = self.conn.execute(
+            "SELECT * FROM opportunities "
+            "WHERE is_primary = 1 AND deadline IS NOT NULL "
+            "AND deadline >= ? AND deadline <= ? "
+            "ORDER BY deadline ASC, id DESC LIMIT ?",
+            (today, horizon, limit),
         ).fetchall()
         return [dict(row) for row in rows]
 
