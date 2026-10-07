@@ -35,7 +35,9 @@ _SCRIPT_DIR = Path(__file__).resolve().parent
 if str(_SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(_SCRIPT_DIR))
 
+from adapters.ajk_ppra import AjkPpraAdapter  # noqa: E402
 from adapters.epads import EpadsAdapter  # noqa: E402
+from adapters.gb_ppra import GbPpraAdapter  # noqa: E402
 from adapters.kppra import KppraActiveTendersAdapter  # noqa: E402
 from adapters.ppra_epms import PPRAEpmsAdapter  # noqa: E402
 from ai import run_analysis, run_matching  # noqa: E402
@@ -52,6 +54,8 @@ ADAPTERS = {
     "ppra_epms": PPRAEpmsAdapter,
     "kppra_active_tenders": KppraActiveTendersAdapter,
     "epads": EpadsAdapter,
+    "ajk_ppra": AjkPpraAdapter,
+    "gb_ppra": GbPpraAdapter,
 }
 
 
