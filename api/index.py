@@ -30,4 +30,29 @@ if "DATABASE_URL" not in os.environ and os.path.exists(_DEMO_DB):
     os.environ["TENDERSCOUT_DB_PATH"] = _target
 
 # Importing collector/api builds the ASGI app (module-level `app`).
-from api import app as app  # noqa: E402,F401  (Vercel imports this name)
+from api import app as _app  # noqa: E402
+
+
+class _ApiPrefixStrip:
+    """Normalize the path FastAPI sees.
+
+    Vercel routes `api/index.py` behind a rewrite; depending on ETL the
+    function may receive the request with a leading `/api` (e.g. from a
+    `/api`-based proxy) or with the original public path. Strip one
+    leading `/api` segment so the non-prefixed route table always
+    matches, then hand off to the app.
+    """
+
+    def __init__(self, application):
+        self.application = application
+
+    async def __call__(self, scope, receive, send):
+        if scope.get("type") == "http" and scope.get("path", "").startswith("/api"):
+            scope = dict(scope)
+            stripped = scope["path"][4:] or "/"
+            scope["path"] = stripped
+            scope["raw_path"] = stripped.encode("ascii", "ignore")
+        await self.application(scope, receive, send)
+
+
+app = _ApiPrefixStrip(_app)
