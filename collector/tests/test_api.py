@@ -22,11 +22,11 @@ def make_opportunity(**overrides) -> NormalizedOpportunity:
     fields = dict(
         title="Supply of medical equipment for district hospital",
         organization="Punjab Information Technology Board",
-        description="Procurement of ventilators and MRI machines.",
+description="Procurement of ventilators and MRI machines.",
         source_url="https://example.gov.pk/tenders/123",
         source_name="Example Source",
         published_at=datetime(2026, 9, 1, 10, 0, tzinfo=timezone.utc),
-        deadline=datetime(2026, 10, 1, 12, 0, tzinfo=timezone.utc),
+        deadline=datetime(2099, 1, 1, 12, 0, tzinfo=timezone.utc),
         location="Lahore",
         category="Health",
         procurement_type="goods",
@@ -121,7 +121,7 @@ class TestOpportunityList:
         assert row["title"].startswith("Supply of medical equipment")
         assert row["source_url"] == "https://example.gov.pk/tenders/123"
         assert row["deadline"] == datetime(
-            2026, 10, 1, 12, 0, tzinfo=timezone.utc
+            2099, 1, 1, 12, 0, tzinfo=timezone.utc
         ).isoformat()
         assert row["location"] == "Lahore"
         assert row["category"] == "Health"
@@ -130,6 +130,38 @@ class TestOpportunityList:
         assert "raw_content" not in row
         assert "is_primary" not in row
         assert "duplicate_group_id" not in row
+
+    def test_list_default_hides_expired_keeps_undated(self, harness) -> None:
+        # The default browse view only shows live tenders: past-deadline
+        # rows drop out while undated and future-deadline rows remain.
+        harness.add(
+            deadline=datetime(2020, 3, 1, tzinfo=timezone.utc), external_id="701"
+        )
+        harness.add(deadline=None, external_id="702")
+        harness.add(
+            deadline=datetime(2099, 1, 1, tzinfo=timezone.utc), external_id="703"
+        )
+        body = harness.client.get("/opportunities").json()
+        assert body["total"] == 2
+        ids = [row["external_id"] for row in body["opportunities"]]
+        assert "701" not in ids
+        assert "702" in ids
+        assert "703" in ids
+
+    def test_explicit_window_overrides_live_default(self, harness) -> None:
+        # A caller who asks for an explicit historical window still gets
+        # the past rows (the live default only applies to open queries).
+        harness.add(
+            deadline=datetime(2020, 3, 1, tzinfo=timezone.utc), external_id="801"
+        )
+        harness.add(
+            deadline=datetime(2099, 1, 1, tzinfo=timezone.utc), external_id="802"
+        )
+        rows = harness.client.get(
+            "/opportunities",
+            params={"deadline_before": "2030-01-01T00:00:00Z"},
+        ).json()["opportunities"]
+        assert [row["external_id"] for row in rows] == ["801"]
 
     def test_limit_and_offset_page(self, harness) -> None:
         ids = [harness.add(external_id=str(200 + i)) for i in range(5)]

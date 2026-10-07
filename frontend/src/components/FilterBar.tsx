@@ -57,6 +57,21 @@ export function filtersAreDefault(filters: FilterValues): boolean {
   );
 }
 
+function activeFilterCount(filters: FilterValues): number {
+  let count = 0;
+  if (filters.sourceId !== null) count += 1;
+  if (filters.location) count += 1;
+  if (filters.category) count += 1;
+  if (filters.province) count += 1;
+  if (filters.procurementType) count += 1;
+  if (filters.organization) count += 1;
+  if (filters.deadlineFrom) count += 1;
+  if (filters.deadlineTo) count += 1;
+  if (filters.sort !== "newest") count += 1;
+  if (filters.includeDuplicates) count += 1;
+  return count;
+}
+
 interface FilterBarProps {
   values: FilterValues;
   sources: { id: number; name: string }[];
@@ -68,10 +83,16 @@ interface FilterBarProps {
   onChange: (values: FilterValues) => void;
 }
 
-const SELECT_CLASS =
-  "rounded-md border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-200 disabled:cursor-not-allowed disabled:opacity-40";
-const INPUT_CLASS =
-  "rounded-md border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-200 placeholder:text-slate-500 disabled:cursor-not-allowed disabled:opacity-40";
+const FIELD_CLASS =
+  "w-full rounded-lg border border-slate-700/80 bg-slate-900 px-3 py-2 text-sm text-slate-200 transition focus:border-sky-500 focus:outline-none disabled:cursor-not-allowed disabled:opacity-40";
+
+function FieldLabel({ children }: { children: string }) {
+  return (
+    <span className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+      {children}
+    </span>
+  );
+}
 
 function change<T extends HTMLSelectElement | HTMLInputElement>(
   key: keyof FilterValues,
@@ -93,172 +114,234 @@ export function FilterBar(props: FilterBarProps) {
     procurementTypes,
     disabled,
   } = props;
+  const applied = activeFilterCount(values);
 
   return (
     <div
       data-testid="filter-bar"
-      className="flex flex-wrap items-center gap-2"
+      className="rounded-2xl border border-slate-800 bg-slate-900/60 p-4 shadow-lg shadow-slate-950/30"
     >
-      <select
-        value={values.sourceId ?? ""}
-        onChange={change("sourceId", props, (e) =>
-          e.target.value === "" ? null : Number(e.target.value),
-        )}
-        disabled={disabled}
-        aria-label="Filter by source"
-        title="Source filter applies to browse mode only"
-        className={SELECT_CLASS}
-      >
-        <option value="">All sources</option>
-        {sources.map((source) => (
-          <option key={source.id} value={source.id}>
-            {source.name}
-          </option>
-        ))}
-      </select>
+      <div className="flex items-center justify-between gap-3 pb-3">
+        <h2 className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-slate-500">
+          <svg
+            viewBox="0 0 24 24"
+            className="h-3.5 w-3.5"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            aria-hidden="true"
+          >
+            <path d="M22 3H2l8 9.46V19l4 2v-8.54L22 3z" />
+          </svg>
+          Filters
+          {applied > 0 ? (
+            <span className="rounded-full bg-sky-500/15 px-2 py-0.5 text-[10px] font-semibold text-sky-300">
+              {applied} active
+            </span>
+          ) : null}
+        </h2>
+        {!filtersAreDefault(values) ? (
+          <button
+            type="button"
+            onClick={() => props.onChange(EMPTY_FILTERS)}
+            className="rounded-lg border border-slate-700 px-2.5 py-1 text-xs font-medium text-slate-300 transition hover:border-slate-600 hover:bg-slate-800"
+          >
+            Clear all filters
+          </button>
+        ) : null}
+      </div>
 
-      <select
-        value={values.location}
-        onChange={change("location", props, (e) => e.target.value)}
-        disabled={disabled}
-        aria-label="Filter by city"
-        title="City filter applies to browse mode only"
-        className={SELECT_CLASS}
-      >
-        <option value="">All cities</option>
-        {locations.map((location) => (
-          <option key={location} value={location}>
-            {location}
-          </option>
-        ))}
-      </select>
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+        <div>
+          <FieldLabel>Source</FieldLabel>
+          <select
+            value={values.sourceId ?? ""}
+            onChange={change("sourceId", props, (e) =>
+              e.target.value === "" ? null : Number(e.target.value),
+            )}
+            disabled={disabled}
+            aria-label="Filter by source"
+            title="Source filter applies to browse mode only"
+            className={FIELD_CLASS}
+          >
+            <option value="">All sources</option>
+            {sources.map((source) => (
+              <option key={source.id} value={source.id}>
+                {source.name}
+              </option>
+            ))}
+          </select>
+        </div>
 
-      <select
-        value={values.category}
-        onChange={change("category", props, (e) => e.target.value)}
-        disabled={disabled}
-        aria-label="Filter by category"
-        title="Category filter applies to browse mode only"
-        className={SELECT_CLASS}
-      >
-        <option value="">All categories</option>
-        {categories.map((category) => (
-          <option key={category} value={category}>
-            {category}
-          </option>
-        ))}
-      </select>
+        <div>
+          <FieldLabel>City</FieldLabel>
+          <select
+            value={values.location}
+            onChange={change("location", props, (e) => e.target.value)}
+            disabled={disabled}
+            aria-label="Filter by city"
+            title="City filter applies to browse mode only"
+            className={FIELD_CLASS}
+          >
+            <option value="">All cities</option>
+            {locations.map((location) => (
+              <option key={location} value={location}>
+                {location}
+              </option>
+            ))}
+          </select>
+        </div>
 
-      <select
-        value={values.province}
-        onChange={change("province", props, (e) => e.target.value)}
-        disabled={disabled}
-        aria-label="Filter by province"
-        title="Province filter applies to browse mode only"
-        className={SELECT_CLASS}
-      >
-        <option value="">All provinces</option>
-        {provinces.map((province) => (
-          <option key={province} value={province}>
-            {province}
-          </option>
-        ))}
-      </select>
+        <div>
+          <FieldLabel>Category</FieldLabel>
+          <select
+            value={values.category}
+            onChange={change("category", props, (e) => e.target.value)}
+            disabled={disabled}
+            aria-label="Filter by category"
+            title="Category filter applies to browse mode only"
+            className={FIELD_CLASS}
+          >
+            <option value="">All categories</option>
+            {categories.map((category) => (
+              <option key={category} value={category}>
+                {category}
+              </option>
+            ))}
+          </select>
+        </div>
 
-      <select
-        value={values.procurementType}
-        onChange={change("procurementType", props, (e) => e.target.value)}
-        disabled={disabled}
-        aria-label="Filter by procurement type"
-        title="Procurement type filter applies to browse mode only"
-        className={SELECT_CLASS}
-      >
-        <option value="">All procurement types</option>
-        {procurementTypes.map((procurementType) => (
-          <option key={procurementType} value={procurementType}>
-            {procurementType}
-          </option>
-        ))}
-      </select>
+        <div>
+          <FieldLabel>Province</FieldLabel>
+          <select
+            value={values.province}
+            onChange={change("province", props, (e) => e.target.value)}
+            disabled={disabled}
+            aria-label="Filter by province"
+            title="Province filter applies to browse mode only"
+            className={FIELD_CLASS}
+          >
+            <option value="">All provinces</option>
+            {provinces.map((province) => (
+              <option key={province} value={province}>
+                {province}
+              </option>
+            ))}
+          </select>
+        </div>
 
-      <input
-        type="text"
-        value={values.organization}
-        onChange={change("organization", props, (e) => e.target.value)}
-        disabled={disabled}
-        maxLength={160}
-        placeholder="Organization contains…"
-        aria-label="Filter by organization"
-        title="Organization filter applies to browse mode only"
-        className={`${INPUT_CLASS} w-56`}
-      />
+        <div>
+          <FieldLabel>Type</FieldLabel>
+          <select
+            value={values.procurementType}
+            onChange={change("procurementType", props, (e) => e.target.value)}
+            disabled={disabled}
+            aria-label="Filter by procurement type"
+            title="Procurement type filter applies to browse mode only"
+            className={FIELD_CLASS}
+          >
+            <option value="">All types</option>
+            {procurementTypes.map((procurementType) => (
+              <option key={procurementType} value={procurementType}>
+                {procurementType}
+              </option>
+            ))}
+          </select>
+        </div>
 
-      <span className="flex items-center gap-1 text-xs text-slate-400">
-        <label htmlFor="deadline-from" className="sr-only">
-          Deadline from
-        </label>
-        <input
-          id="deadline-from"
-          type="date"
-          value={values.deadlineFrom}
-          onChange={change("deadlineFrom", props, (e) => e.target.value)}
-          disabled={disabled}
-          aria-label="Deadline from"
-          title="Only tenders closing on or after this date"
-          className={SELECT_CLASS}
-        />
-        <span aria-hidden="true">→</span>
-        <label htmlFor="deadline-to" className="sr-only">
-          Deadline to
-        </label>
-        <input
-          id="deadline-to"
-          type="date"
-          value={values.deadlineTo}
-          onChange={change("deadlineTo", props, (e) => e.target.value)}
-          disabled={disabled}
-          aria-label="Deadline to"
-          title="Only tenders closing on or before this date"
-          className={SELECT_CLASS}
-        />
-      </span>
+        <div>
+          <FieldLabel>Organization</FieldLabel>
+          <input
+            type="text"
+            value={values.organization}
+            onChange={change("organization", props, (e) => e.target.value)}
+            disabled={disabled}
+            maxLength={160}
+            placeholder="Contains…"
+            aria-label="Filter by organization"
+            title="Organization filter applies to browse mode only"
+            className={FIELD_CLASS}
+          />
+        </div>
 
-      <select
-        value={values.sort}
-        onChange={change("sort", props, (e) => e.target.value as SortValue)}
-        disabled={disabled}
-        aria-label="Order by"
-        title="Order results by newest or soonest closing"
-        className={SELECT_CLASS}
-      >
-        <option value="newest">Newest first</option>
-        <option value="closing">Closing soon first</option>
-      </select>
+        <div className="col-span-2">
+          <FieldLabel>Deadline window</FieldLabel>
+          <div className="flex items-center gap-2">
+            <label htmlFor="deadline-from" className="sr-only">
+              Deadline from
+            </label>
+            <input
+              id="deadline-from"
+              type="date"
+              value={values.deadlineFrom}
+              onChange={change("deadlineFrom", props, (e) => e.target.value)}
+              disabled={disabled}
+              aria-label="Deadline from"
+              title="Only tenders closing on or after this date"
+              className={`${FIELD_CLASS} flex-1`}
+            />
+            <span
+              aria-hidden="true"
+              className="text-slate-600"
+            >
+              →
+            </span>
+            <label htmlFor="deadline-to" className="sr-only">
+              Deadline to
+            </label>
+            <input
+              id="deadline-to"
+              type="date"
+              value={values.deadlineTo}
+              onChange={change("deadlineTo", props, (e) => e.target.value)}
+              disabled={disabled}
+              aria-label="Deadline to"
+              title="Only tenders closing on or before this date"
+              className={`${FIELD_CLASS} flex-1`}
+            />
+          </div>
+        </div>
+      </div>
 
-      <label
-        className="flex cursor-pointer items-center gap-1.5 text-xs text-slate-300"
-        title="Show the same notice as listed by every source"
-      >
-        <input
-          type="checkbox"
-          checked={values.includeDuplicates}
-          onChange={change("includeDuplicates", props, (e) => e.target.checked)}
-          disabled={disabled}
-          aria-label="Include duplicate listings"
-          className="h-3.5 w-3.5 accent-sky-500"
-        />
-        Show mirror listings
-      </label>
-
-      {!filtersAreDefault(values) ? (
-        <button
-          type="button"
-          onClick={() => props.onChange(EMPTY_FILTERS)}
-          className="rounded-md border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-300 hover:bg-slate-800"
+      <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-slate-800/80 pt-3">
+        <label
+          className="flex cursor-pointer select-none items-center gap-2 text-sm text-slate-300"
+          title="Show the same notice as listed by every source"
         >
-          Clear filters
-        </button>
-      ) : null}
+          <span className="relative inline-block h-5 w-9">
+            <input
+              type="checkbox"
+              checked={values.includeDuplicates}
+              onChange={change(
+                "includeDuplicates",
+                props,
+                (e) => e.target.checked,
+              )}
+              disabled={disabled}
+              aria-label="Include duplicate listings"
+              className="peer sr-only"
+            />
+            <span className="absolute inset-0 rounded-full bg-slate-700 transition peer-checked:bg-sky-500/70 peer-disabled:opacity-40" />
+            <span className="absolute left-0.5 top-0.5 h-4 w-4 rounded-full bg-white shadow transition peer-checked:translate-x-4" />
+          </span>
+          Show mirror listings
+        </label>
+
+        <div className="flex flex-wrap items-center gap-2">
+          <select
+            value={values.sort}
+            onChange={change("sort", props, (e) => e.target.value as SortValue)}
+            disabled={disabled}
+            aria-label="Order by"
+            title="Order results by newest or soonest closing"
+            className={`${FIELD_CLASS} !w-auto`}
+          >
+            <option value="newest">Newest first</option>
+            <option value="closing">Closing soon first</option>
+          </select>
+        </div>
+      </div>
     </div>
   );
 }

@@ -34,12 +34,7 @@ function errorText(err: unknown): string {
   return String(err);
 }
 
-/**
- * AI assist for one tender: deterministic reference extraction and
- * fit hints always, plus optional LLM prose and a bid-document draft
- * when the server has an API key configured. Nothing runs until the
- * user clicks a button, so rendering stays offline-safe.
- */
+/** AI assistant for one tender, shown beside the record in a copilot column. */
 export function AiAssistPanel({ opportunityId, duplicates }: AiAssistPanelProps) {
   const [analysis, setAnalysis] = useState<AiAnalysis | null>(null);
   const [analyzing, setAnalyzing] = useState(false);
@@ -81,15 +76,31 @@ export function AiAssistPanel({ opportunityId, duplicates }: AiAssistPanelProps)
   function handleDraft() {
     setDrafting(true);
     setDraftError(null);
-    aiGenerateRfp(opportunityId, companyName.trim(), capabilities.trim().split(/\n+/).filter(Boolean))
+    aiGenerateRfp(
+      opportunityId,
+      companyName.trim(),
+      capabilities.trim().split(/\n+/).filter(Boolean),
+    )
       .then(setDraft)
       .catch((err: unknown) => setDraftError(errorText(err)))
       .finally(() => setDrafting(false));
   }
 
   return (
-    <section className="mt-6 rounded-lg border border-violet-500/30 bg-violet-500/5 p-4">
-      <h3 className="text-xs uppercase tracking-wide text-violet-300">
+    <section className="rounded-2xl border border-violet-500/25 bg-gradient-to-b from-violet-500/[0.08] to-transparent p-5">
+      <h3 className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-violet-300">
+        <svg
+          viewBox="0 0 24 24"
+          className="h-4 w-4"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          aria-hidden="true"
+        >
+          <path d="M12 3l1.9 5.7a2 2 0 0 0 1.3 1.3L21 12l-5.8 1.9a2 2 0 0 0-1.3 1.3L12 21l-1.9-5.8a2 2 0 0 0-1.3-1.3L3 12l5.8-1.9a2 2 0 0 0 1.3-1.3L12 3z" />
+        </svg>
         AI Assist
       </h3>
 
@@ -98,7 +109,7 @@ export function AiAssistPanel({ opportunityId, duplicates }: AiAssistPanelProps)
           type="button"
           onClick={handleAnalyze}
           disabled={analyzing}
-          className="rounded-md border border-violet-500/40 bg-violet-500/10 px-3 py-1.5 text-sm text-violet-200 enabled:hover:bg-violet-500/20 disabled:cursor-not-allowed disabled:opacity-50"
+          className="rounded-lg border border-violet-500/40 bg-violet-500/10 px-3 py-2 text-sm font-medium text-violet-200 transition enabled:hover:bg-violet-500/20 disabled:cursor-not-allowed disabled:opacity-50"
         >
           {analyzing ? "Analyzing…" : "Analyze this tender"}
         </button>
@@ -107,9 +118,11 @@ export function AiAssistPanel({ opportunityId, duplicates }: AiAssistPanelProps)
             type="button"
             onClick={handleCheckDuplicates}
             disabled={checkingDuplicates}
-            className="rounded-md border border-violet-500/40 bg-violet-500/10 px-3 py-1.5 text-sm text-violet-200 enabled:hover:bg-violet-500/20 disabled:cursor-not-allowed disabled:opacity-50"
+            className="rounded-lg border border-violet-500/40 bg-violet-500/10 px-3 py-2 text-sm font-medium text-violet-200 transition enabled:hover:bg-violet-500/20 disabled:cursor-not-allowed disabled:opacity-50"
           >
-            {checkingDuplicates ? "Checking…" : "Verify these are the same tender"}
+            {checkingDuplicates
+              ? "Checking…"
+              : "Verify these are the same tender"}
           </button>
         ) : null}
       </div>
@@ -125,7 +138,7 @@ export function AiAssistPanel({ opportunityId, duplicates }: AiAssistPanelProps)
           <p className="text-sm leading-relaxed text-slate-200">
             {analysis.summary}
           </p>
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <div className="grid grid-cols-1 gap-3">
             <div>
               <h4 className="text-xs font-medium text-slate-400">
                 Requirements
@@ -133,9 +146,7 @@ export function AiAssistPanel({ opportunityId, duplicates }: AiAssistPanelProps)
               <SectionList items={analysis.requirements} />
             </div>
             <div>
-              <h4 className="text-xs font-medium text-slate-400">
-                Fit hints
-              </h4>
+              <h4 className="text-xs font-medium text-slate-400">Fit hints</h4>
               <SectionList items={analysis.fit_hints} />
             </div>
             <div>
@@ -167,7 +178,7 @@ export function AiAssistPanel({ opportunityId, duplicates }: AiAssistPanelProps)
       ) : null}
 
       {dedup !== null ? (
-        <div className="mt-4 rounded-md border border-slate-700 bg-slate-900/60 p-3 text-sm">
+        <div className="mt-4 rounded-lg border border-slate-700 bg-slate-900/60 p-3 text-sm">
           <p className="font-medium text-slate-100">
             {dedup.same_tender
               ? `Same tender — ${Math.round(dedup.confidence * 100)}% confidence.`
@@ -192,9 +203,9 @@ export function AiAssistPanel({ opportunityId, duplicates }: AiAssistPanelProps)
 
       <div className="mt-5 border-t border-violet-500/20 pt-4">
         <h4 className="text-sm font-medium text-slate-200">
-          Draft a bid document draft
+          Draft a bid document
         </h4>
-        <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
+        <div className="mt-2 grid grid-cols-1 gap-2">
           <input
             type="text"
             value={companyName}
@@ -202,7 +213,7 @@ export function AiAssistPanel({ opportunityId, duplicates }: AiAssistPanelProps)
             placeholder="Your company name"
             aria-label="Company name"
             maxLength={120}
-            className="rounded-md border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-200 placeholder:text-slate-500"
+            className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-200 placeholder:text-slate-500 focus:border-sky-500 focus:outline-none"
           />
           <textarea
             value={capabilities}
@@ -210,14 +221,14 @@ export function AiAssistPanel({ opportunityId, duplicates }: AiAssistPanelProps)
             placeholder="Capabilities, one per line (e.g. Electrical works)"
             aria-label="Company capabilities"
             rows={3}
-            className="rounded-md border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-200 placeholder:text-slate-500"
+            className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-200 placeholder:text-slate-500 focus:border-sky-500 focus:outline-none"
           />
         </div>
         <button
           type="button"
           onClick={handleDraft}
           disabled={drafting || !companyName.trim()}
-          className="mt-2 rounded-md bg-violet-600 px-3 py-1.5 text-sm font-medium text-white enabled:hover:bg-violet-500 disabled:cursor-not-allowed disabled:opacity-50"
+          className="mt-2 rounded-lg bg-gradient-to-r from-violet-600 to-indigo-600 px-4 py-2 text-sm font-medium text-white transition enabled:hover:from-violet-500 enabled:hover:to-indigo-500 disabled:cursor-not-allowed disabled:opacity-50"
         >
           {drafting ? "Drafting…" : "Draft document"}
         </button>
@@ -227,7 +238,7 @@ export function AiAssistPanel({ opportunityId, duplicates }: AiAssistPanelProps)
           </p>
         ) : null}
         {draft !== null ? (
-          <div className="mt-3 space-y-3 rounded-md border border-slate-700 bg-slate-900/60 p-4">
+          <div className="mt-3 space-y-3 rounded-lg border border-slate-700 bg-slate-900/60 p-4">
             <p className="font-medium text-slate-100">{draft.document_title}</p>
             <p className="text-sm leading-relaxed text-slate-300">
               {draft.introduction}

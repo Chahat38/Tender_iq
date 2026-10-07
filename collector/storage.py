@@ -1163,6 +1163,7 @@ class Storage:
         deadline_to: str | None = None,
         primary_only: bool = True,
         procurement_type: str | None = None,
+        exclude_expired: datetime | None = None,
     ) -> int:
         """Count opportunities matching the list_opportunities filters.
 
@@ -1183,6 +1184,7 @@ class Storage:
             deadline_to=deadline_to,
             primary_only=primary_only,
             procurement_type=procurement_type,
+            exclude_expired=exclude_expired,
         )
         row = self.conn.execute(
             f"SELECT COUNT(*) AS n FROM opportunities{clause}", params
@@ -1248,6 +1250,7 @@ class Storage:
         primary_only: bool = True,
         procurement_type: str | None = None,
         sort: str = "newest",
+        exclude_expired: datetime | None = None,
     ) -> list[dict[str, Any]]:
         """Return a page of opportunities as plain dicts.
 
@@ -1306,6 +1309,7 @@ class Storage:
             deadline_to=deadline_to,
             primary_only=primary_only,
             procurement_type=procurement_type,
+            exclude_expired=exclude_expired,
         )
         if sort == "closing":
             # Earliest deadline first; undated rows last; ties newest
@@ -1333,6 +1337,7 @@ class Storage:
         deadline_to: str | None = None,
         primary_only: bool = True,
         procurement_type: str | None = None,
+        exclude_expired: datetime | None = None,
     ) -> tuple[str, list[Any]]:
         """Build the WHERE clause shared by list_opportunities and
         count_opportunities so both always filter identically.
@@ -1345,6 +1350,10 @@ class Storage:
         :meth:`list_distinct_provinces`, which are already lowercased).
         ``deadline_after`` uses the :data:`NULL_DEADLINE_FILTER` sentinel
         for "no lower bound"; ``None`` hides rows without a deadline.
+        ``exclude_expired`` keeps rows without a deadline and rows whose
+        deadline is strictly later than the given instant (the default
+        "live tenders only" view; it leaves deadline semantics
+        untouched and combines with any explicit window).
         """
         where = []
         params: list[Any] = []
@@ -1382,6 +1391,10 @@ class Storage:
                     "(deadline IS NOT NULL AND deadline > ?)"
                 )
                 params.append(_db_value(deadline_after))
+        if exclude_expired is not None:
+            # Live view: undated rows stay, past deadlines go.
+            where.append("(deadline IS NULL OR deadline > ?)")
+            params.append(_db_value(exclude_expired))
         if primary_only:
             # One listed tender per notice even when the collector
             # found the same notice on several sources (the primary row
