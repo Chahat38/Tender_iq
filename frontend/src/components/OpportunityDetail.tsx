@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
-import { ApiError, getOpportunity } from "../api";
-import type { OpportunityDetail as OpportunityDetailData } from "../types";
-import { formatDateTime } from "../utils/format";
+import { ApiError, getDuplicates, getOpportunity } from "../api";
+import type { DuplicateLink, OpportunityDetail as OpportunityDetailData } from "../types";
+import { daysUntil, formatDateTime } from "../utils/format";
+import { AiAssistPanel } from "./AiAssistPanel";
 import { StatusBadge } from "./StatusBadge";
 
 interface OpportunityDetailProps {
@@ -27,14 +28,16 @@ function Field({
   );
 }
 
-/** Full record view: normalized fields, documents and update history. */
+/** Full record view: normalized fields, documents, duplicate listings and update history. */
 export function OpportunityDetail({ id, onBack }: OpportunityDetailProps) {
   const [detail, setDetail] = useState<OpportunityDetailData | null>(null);
+  const [duplicates, setDuplicates] = useState<DuplicateLink[]>([]);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     const controller = new AbortController();
     setDetail(null);
+    setDuplicates([]);
     setError(null);
     getOpportunity(id, controller.signal)
       .then(setDetail)
@@ -44,6 +47,9 @@ export function OpportunityDetail({ id, onBack }: OpportunityDetailProps) {
         }
         setError(err instanceof ApiError ? err.detail : String(err));
       });
+    getDuplicates(id, controller.signal)
+      .then(setDuplicates)
+      .catch(() => setDuplicates([]));
     return () => controller.abort();
   }, [id]);
 
@@ -67,6 +73,16 @@ export function OpportunityDetail({ id, onBack }: OpportunityDetailProps) {
   if (detail === null) {
     return <p className="py-16 text-center text-sm text-slate-400">Loading…</p>;
   }
+  const remainingDays = daysUntil(detail?.deadline ?? null);
+  const countdownLabel =
+    remainingDays === null
+      ? null
+      : remainingDays === 0
+        ? "Closes today"
+        : remainingDays < 0
+          ? `Deadline passed ${-remainingDays} day${-remainingDays === 1 ? "" : "s"} ago`
+          : `${remainingDays} day${remainingDays === 1 ? "" : "s"} remaining`;
+
   return (
     <section className="rounded-xl border border-slate-800 bg-slate-900/60 p-6">
       <button
@@ -90,12 +106,15 @@ export function OpportunityDetail({ id, onBack }: OpportunityDetailProps) {
           rel="noreferrer"
           className="text-sm text-sky-400 hover:underline"
         >
-          View on source ↗
+          Open official source ↗
         </a>
       </div>
       <dl className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
         <Field label="Reference no." value={detail.reference_number} />
         <Field label="Deadline" value={formatDateTime(detail.deadline)} />
+        {countdownLabel !== null ? (
+          <Field label="Countdown" value={countdownLabel} />
+        ) : null}
         <Field label="Published" value={formatDateTime(detail.published_at)} />
         <Field label="Location" value={detail.location} />
         <Field label="Category" value={detail.category} />
@@ -110,6 +129,32 @@ export function OpportunityDetail({ id, onBack }: OpportunityDetailProps) {
           value={formatDateTime(detail.last_verified_at)}
         />
       </dl>
+      {duplicates.length >= 2 ? (
+        <div className="mt-6 rounded-md border border-amber-500/30 bg-amber-500/5 p-4">
+          <h3 className="text-xs uppercase tracking-wide text-amber-300">
+            Also listed on {duplicates.length} other portals
+          </h3>
+          <ul className="mt-2 space-y-1">
+            {duplicates.map((duplicate) => (
+              <li key={duplicate.id} className="text-sm text-slate-300">
+                <a
+                  href={duplicate.source_url ?? undefined}
+                  target="_blank"
+                  rel="noreferrer"
+                  className={duplicate.source_url ? "text-sky-400 hover:underline" : undefined}
+                >
+                  {duplicate.source_name ?? "Unknown source"}
+                </a>
+              </li>
+            ))}
+          </ul>
+          <p className="mt-2 text-xs text-slate-500">
+            This is one notice published by several portals — use AI Assist to
+            confirm the match.
+          </p>
+        </div>
+      ) : null}
+      <AiAssistPanel opportunityId={detail.id} duplicates={duplicates} />
       {detail.description ? (
         <div className="mt-6">
           <h3 className="text-xs uppercase tracking-wide text-slate-500">

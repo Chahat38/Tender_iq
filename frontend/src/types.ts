@@ -95,3 +95,79 @@ export interface SearchPage {
   offset: number;
   results: SearchHit[];
 }
+
+/** A sibling listing of the same notice on another source (DuplicateOut). */
+export interface DuplicateLink {
+  id: number;
+  source_id: number;
+  source_name: string | null;
+  title: string | null;
+  organization: string | null;
+  deadline: string | null;
+  source_url: string | null;
+  is_primary: boolean;
+}
+
+/** "New tenders" + "closing soon" buckets (NotificationsOut). */
+export interface NotificationsPage {
+  generated_at: string;
+  window_days: number;
+  new_tenders: Opportunity[];
+  new_total: number;
+  closing_soon: Opportunity[];
+  closing_total: number;
+}
+
+/** POST /ai/analyze/{id} response. */
+export interface AiAnalysis {
+  opportunity_id: number;
+  llm_available: boolean;
+  provider: string;
+  model: string | null;
+  prompt_version: string;
+  category: string | null;
+  subcategory: string | null;
+  keywords: string[];
+  procurement_type: string | null;
+  requirements: string[];
+  date_conflicts: string[];
+  summary: string;
+  fit_hints: string[];
+  red_flags: string[];
+}
+
+/** POST /ai/dedup response. */
+export interface AiDedupResult {
+  llm_available: boolean;
+  same_tender: boolean;
+  confidence: number;
+  reason: string;
+  canonical: {
+    title: string;
+    organization: string;
+    deadline: string;
+    source_url: string;
+  };
+  listings: {
+    opportunity_id: number;
+    source_name: string | null;
+    reference_number: string | null;
+    title: string | null;
+    organization: string | null;
+    deadline: string | null;
+    source_url: string | null;
+  }[];
+}
+
+/** POST /ai/rfp response (draft only, bidder stays responsible). */
+export interface AiRfpDraft {
+  document_title: string;
+  introduction: string;
+  eligibility: string[];
+  technical_approach: string[];
+  pricing_note: string;
+  submission_checklist: string[];
+  coverage_disclaimer: string;
+  provider: string;
+  model: string | null;
+}

@@ -64,3 +64,24 @@ export function deadlineStatus(
     tone: days <= 7 ? "warn" : "ok",
   };
 }
+
+/**
+ * Whole 24-hour periods until ``deadline`` (floored, so anything later
+ * today is 0 and a deadline 25h away is 1). Returns null for
+ * missing/unparseable dates and negative for past deadlines. Purely
+ * presentational countdown data; unlike deadlineStatus it never rounds
+ * a partial day up.
+ */
+export function daysUntil(
+  deadline: string | null | undefined,
+  now: Date = new Date(),
+): number | null {
+  if (deadline === null || deadline === undefined || !deadline.trim()) {
+    return null;
+  }
+  const at = Date.parse(deadline);
+  if (Number.isNaN(at)) {
+    return null;
+  }
+  return Math.floor((at - now.getTime()) / DAY_MS);
+}

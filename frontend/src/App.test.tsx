@@ -4,6 +4,8 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
 import type {
+  AiAnalysis,
+  NotificationsPage as NotificationsData,
   Opportunity,
   OpportunityDetail,
   OpportunityPage,
@@ -25,16 +27,30 @@ vi.mock("./api", () => ({
   listOpportunities: vi.fn(),
   listSources: vi.fn(),
   listLocations: vi.fn(),
+  listCategories: vi.fn(),
+  listProvinces: vi.fn(),
+  listProcurementTypes: vi.fn(),
   getOpportunity: vi.fn(),
+  getDuplicates: vi.fn(),
+  getNotifications: vi.fn(),
   searchOpportunities: vi.fn(),
+  aiAnalyze: vi.fn(),
+  aiDedup: vi.fn(),
+  aiGenerateRfp: vi.fn(),
 }));
 
 import * as api from "./api";
 const mockedList = vi.mocked(api.listOpportunities);
 const mockedListSources = vi.mocked(api.listSources);
 const mockedLocations = vi.mocked(api.listLocations);
+const mockedCategories = vi.mocked(api.listCategories);
+const mockedProvinces = vi.mocked(api.listProvinces);
+const mockedProcurementTypes = vi.mocked(api.listProcurementTypes);
 const mockedSearch = vi.mocked(api.searchOpportunities);
 const mockedGet = vi.mocked(api.getOpportunity);
+const mockedGetDuplicates = vi.mocked(api.getDuplicates);
+const mockedNotifications = vi.mocked(api.getNotifications);
+const mockedAnalyze = vi.mocked(api.aiAnalyze);
 
 // RTL cannot auto-register cleanup when vitest globals are off.
 afterEach(() => {
@@ -127,12 +143,62 @@ const detail: OpportunityDetail = {
   updates: [],
 };
 
+const notifications: NotificationsData = {
+  generated_at: "2026-10-06T12:00:00+00:00",
+  window_days: 7,
+  new_tenders: [makeOpportunity()],
+  new_total: 1,
+  closing_soon: [
+    makeOpportunity({ id: 3, title: "Installation of solar panels at district court" }),
+  ],
+  closing_total: 1,
+};
+
+const analysis: AiAnalysis = {
+  opportunity_id: 2,
+  llm_available: false,
+  provider: "deterministic",
+  model: null,
+  prompt_version: "p2",
+  category: "goods",
+  subcategory: null,
+  keywords: ["laboratory", "equipment"],
+  procurement_type: "goods",
+  requirements: ["Valid NTN certificate"],
+  date_conflicts: [],
+  summary: "Supply of laboratory equipment for district hospital.",
+  fit_hints: ["Renewable energy suppliers likely relevant"],
+  red_flags: ["Short submission window"],
+};
+
+const defaultBrowseParams = {
+  limit: 20,
+  offset: 0,
+  sourceId: undefined,
+  location: undefined,
+  category: undefined,
+  organization: undefined,
+  province: undefined,
+  procurementType: undefined,
+  sort: "newest" as const,
+  includeDuplicates: undefined,
+  deadlineFrom: undefined,
+  deadlineTo: undefined,
+};
+
 beforeEach(() => {
+  window.location.hash = "";
   vi.resetAllMocks();
   mockedList.mockResolvedValue(page);
   mockedListSources.mockResolvedValue(sources);
   mockedLocations.mockResolvedValue(["karachi, pakistan", "lahore, pakistan"]);
+  mockedCategories.mockResolvedValue([]);
+  mockedProvinces.mockResolvedValue([]);
+  mockedProcurementTypes.mockResolvedValue(["goods", "works", "services"]);
   mockedSearch.mockResolvedValue(searchPage);
+  mockedGetDuplicates.mockResolvedValue([]);
+  mockedNotifications.mockResolvedValue(notifications);
+  mockedAnalyze.mockResolvedValue(analysis);
 });
 
 describe("App browse mode", () => {
@@ -148,7 +214,7 @@ describe("App browse mode", () => {
     ).toBeInTheDocument();
     expect(screen.getByText("Showing 1–2 of 2")).toBeInTheDocument();
     expect(mockedList).toHaveBeenCalledWith(
-      { limit: 20, offset: 0, sourceId: undefined, location: undefined },
+      defaultBrowseParams,
       expect.anything(),
     );
   });
@@ -163,12 +229,44 @@ describe("App browse mode", () => {
     });
     await waitFor(() =>
       expect(mockedList).toHaveBeenLastCalledWith(
+        { ...defaultBrowseParams, location: "karachi, pakistan" },
+        expect.anything(),
+      ),
+    );
+  });
+
+  it("filters by procurement type and sorts by closing soon", async () => {
+    render(<App />);
+    await screen.findByText(
+      "Re-tender for Maintenance Store Items SZHL FY 2026-27",
+    );
+    fireEvent.change(screen.getByLabelText("Filter by procurement type"), {
+      target: { value: "works" },
+    });
+    fireEvent.change(screen.getByLabelText("Order by"), {
+      target: { value: "closing" },
+    });
+    await waitFor(() =>
+      expect(mockedList).toHaveBeenLastCalledWith(
         {
-          limit: 20,
-          offset: 0,
-          sourceId: undefined,
-          location: "karachi, pakistan",
+          ...defaultBrowseParams,
+          procurementType: "works",
+          sort: "closing",
         },
+        expect.anything(),
+      ),
+    );
+  });
+
+  it("reveals duplicate listings when the mirror toggle is on", async () => {
+    render(<App />);
+    await screen.findByText(
+      "Re-tender for Maintenance Store Items SZHL FY 2026-27",
+    );
+    fireEvent.click(screen.getByLabelText("Include duplicate listings"));
+    await waitFor(() =>
+      expect(mockedList).toHaveBeenLastCalledWith(
+        { ...defaultBrowseParams, includeDuplicates: true },
         expect.anything(),
       ),
     );
@@ -184,7 +282,7 @@ describe("App browse mode", () => {
     });
     await waitFor(() =>
       expect(mockedList).toHaveBeenLastCalledWith(
-        { limit: 20, offset: 0, sourceId: 1, location: undefined },
+        { ...defaultBrowseParams, sourceId: 1 },
         expect.anything(),
       ),
     );
@@ -199,7 +297,7 @@ describe("App browse mode", () => {
     fireEvent.click(screen.getByRole("button", { name: /Next/ }));
     await waitFor(() =>
       expect(mockedList).toHaveBeenLastCalledWith(
-        { limit: 20, offset: 20, sourceId: undefined, location: undefined },
+        { ...defaultBrowseParams, offset: 20 },
         expect.anything(),
       ),
     );
@@ -242,7 +340,7 @@ describe("App search mode", () => {
       await screen.findByText("Showing 1–2 of 2"),
     ).toBeInTheDocument();
     expect(mockedList).toHaveBeenLastCalledWith(
-      { limit: 20, offset: 0 },
+      defaultBrowseParams,
       expect.anything(),
     );
   });
@@ -260,8 +358,28 @@ describe("App detail view", () => {
     expect(await screen.findByText("Documents (1)")).toBeInTheDocument();
     expect(screen.getByText(/tender\.pdf/)).toBeInTheDocument();
     expect(mockedGet).toHaveBeenCalledWith(2, expect.anything());
+    expect(mockedGetDuplicates).toHaveBeenCalledWith(2, expect.anything());
     fireEvent.click(screen.getByRole("button", { name: /Back to list/i }));
     expect(await screen.findByText("Showing 1–2 of 2")).toBeInTheDocument();
+  });
+
+  it("runs AI analysis from the detail page", async () => {
+    mockedGet.mockResolvedValue(detail);
+    render(<App />);
+    fireEvent.click(
+      await screen.findByText(
+        "Supply of laboratory equipment for district hospital",
+      ),
+    );
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Analyze this tender" }),
+    );
+    expect(
+      await screen.findByText(
+        "Supply of laboratory equipment for district hospital.",
+      ),
+    ).toBeInTheDocument();
+    expect(mockedAnalyze).toHaveBeenCalledWith(2);
   });
 
   it("shows an error banner when the API fails", async () => {
@@ -270,5 +388,19 @@ describe("App detail view", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "API error 500: Internal database error.",
     );
+  });
+});
+
+describe("App notifications page", () => {
+  it("renders new and closing-soon feeds from the nav link", async () => {
+    render(<App />);
+    await screen.findByText(
+      "Re-tender for Maintenance Store Items SZHL FY 2026-27",
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Notifications" }));
+    expect(
+      await screen.findByText("Installation of solar panels at district court"),
+    ).toBeInTheDocument();
+    expect(mockedNotifications).toHaveBeenCalledWith(7, 20, expect.anything());
   });
 });
