@@ -99,6 +99,20 @@ SOURCE_REGISTRY: dict[str, SourceSpec] = {
         requires_authentication=False,
         crawl_frequency="every 6h",
     ),
+    "pia": SourceSpec(
+        key="pia",
+        source_name="PIA Tenders",
+        base_url="https://piac.com.pk",
+        adapter_type="PiaAdapter",
+        active=True,
+        # Research 2026-10: public /corporate/business-with-pia/tenders
+        # table, no login/CAPTCHA, no pagination; robots.txt is the
+        # stock Joomla file whose rules never touch the tenders path,
+        # PoliteClient robots gate passes (verified 2026-10-07).
+        terms_checked=True,
+        requires_authentication=False,
+        crawl_frequency="every 6h",
+    ),
     "pakrail": SourceSpec(
         key="pakrail",
         source_name="Pakistan Railways",

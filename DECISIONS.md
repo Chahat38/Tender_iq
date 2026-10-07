@@ -155,6 +155,16 @@ possible today; Punjab entities remain covered through the federal
 PPRA EPMS. No public Balochistan PRA tender-listing portal was found;
 Balochistan entities publish through the federal EPMS/EPADS.
 
+Also added PIA (`piac.com.pk/corporate/business-with-pia/tenders`,
+stock Joomla robots; single server-rendered table of current tenders,
+no working pagination, id from the `tenders/{id}` view link). KPT
+(`kpt.gov.pk/tender/show`) looked good (server-rendered, robots 404)
+but PoliteClient cannot even fetch its robots.txt, so the robots gate
+never passes and it is not registered - its tenders are mirrored on
+EPADS anyway. Standalone portals checked during the nationwide sweep
+and found to funnel through the already-covered PPRA EPMS/EPADS:
+NLC, ANF, PNSC, Gwadar Port Authority, PSO, PAA, NBP, KPT internal.
+
 ## Quality tooling
 
 CI runs three gates (`ci.yml`): `ruff check collector scripts`

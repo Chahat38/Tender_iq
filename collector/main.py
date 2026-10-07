@@ -40,6 +40,7 @@ from adapters.epads import EpadsAdapter  # noqa: E402
 from adapters.gb_ppra import GbPpraAdapter  # noqa: E402
 from adapters.kppra import KppraActiveTendersAdapter  # noqa: E402
 from adapters.pakrail import PakrailAdapter  # noqa: E402
+from adapters.pia import PiaAdapter  # noqa: E402
 from adapters.ppra_epms import PPRAEpmsAdapter  # noqa: E402
 from ai import run_analysis, run_matching  # noqa: E402
 from alerts import run as run_alerts  # noqa: E402
@@ -58,6 +59,7 @@ ADAPTERS = {
     "ajk_ppra": AjkPpraAdapter,
     "gb_ppra": GbPpraAdapter,
     "pakrail": PakrailAdapter,
+    "pia": PiaAdapter,
 }
 
 
