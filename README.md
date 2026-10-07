@@ -149,6 +149,39 @@ polite listing pass → bookkeeping) once per registered source, so
   compliance gate → collect (`--enrich-details`) → document fetch →
   log/database artifacts; alerts via `SLACK_WEBHOOK_URL`.
 
+## Deploy to Vercel
+
+The demo runs as two Vercel projects: a static React frontend and the
+FastAPI/collector as a Python serverless function (`api/index.py`,
+`vercel.json`, `requirements.txt` at the repo root). With `DATABASE_URL`
+set the API serves straight from Supabase/Postgres — `GET /search` is
+then served by the ILIKE/GIN fallback in `PostgresStorage` instead of
+SQLite FTS5 (`api.py` `/search` branch).
+
+1. **Supabase** — create a project, open the SQL editor, and run
+   `supabase/migrations/001_init.sql` (tables, indexes, RLS). Grab the
+   project's connection string from Settings → Database (session pooler
+   works fine for a read-mostly demo).
+2. **API project** — at the repo root: `vercel login`, then
+   `vercel` (create project `tenderiq-api`, framework "Other"). Set the
+   environment variable `DATABASE_URL=<connection string>` and re-deploy.
+   The function is `api/index.py` (ASGI `app`); routes appear at
+   `<api>.vercel.app/opportunities`, `/opportunities/{id}`, `/search`, …
+3. **Frontend project** — build with the API base set, then deploy from
+   `frontend/`:
+   ```bash
+   cd frontend && npm install
+   # cross-env or PowerShell: $env:VITE_API_BASE="https://tenderiq-api.vercel.app"
+   VITE_API_BASE=https://tenderiq-api.vercel.app npm run build
+   vercel                # create project tenderiq-frontend (framework: Vite)
+   ```
+   The app calls `${VITE_API_BASE}` for every endpoint; without it the
+   built app assumes a same-origin `/api` proxy.
+
+Optional hardening: a Supabase/RLS read-only role keyed to the frontend
+doesn't fit the API-first design here, so keep `DATABASE_URL` server-side
+secret and serve the UI as a plain static site.
+
 ## Layout
 
 ```

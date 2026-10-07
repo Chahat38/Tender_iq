@@ -1,0 +1,6 @@
+# Runtime subset for the Vercel Python function (api/index.py).
+# The local/dev install uses collector/requirements.txt; this file keeps
+# the serverless bundle small by leaving out adapters/test/build tooling.
+fastapi==0.115.10
+pydantic==2.9.2
+psycopg[binary]==3.2.3
