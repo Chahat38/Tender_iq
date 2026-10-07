@@ -599,6 +599,7 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
         procurement_type: str | None = None,
         sort: str = "newest",
         include_duplicates: bool = False,
+        exclude_expired: datetime | None = None,
     ) -> OpportunityPage:
         """Shared read path for GET /opportunities and the POST filter."""
         with data_lock:
@@ -618,6 +619,7 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
                 primary_only=not include_duplicates,
                 procurement_type=procurement_type,
                 sort=sort,
+                exclude_expired=exclude_expired,
             )
             total = storage.count_opportunities(
                 source_id=source_id,
@@ -631,6 +633,7 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
                 deadline_to=deadline_to,
                 primary_only=not include_duplicates,
                 procurement_type=procurement_type,
+                exclude_expired=exclude_expired,
             )
         return OpportunityPage(
             total=total,
@@ -782,6 +785,14 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
             procurement_type=procurement_type,
             sort=sort,
             include_duplicates=include_duplicates,
+            exclude_expired=(
+                datetime.now(timezone.utc)
+                if (deadline_after is None
+                    and deadline_before is None
+                    and deadline_from is None
+                    and deadline_to is None)
+                else None
+            ),
         )
 
     @app.get("/locations", response_model=list[str], tags=["opportunities"])

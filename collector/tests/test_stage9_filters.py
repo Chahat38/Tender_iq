@@ -23,7 +23,7 @@ def _opp(**overrides) -> NormalizedOpportunity:
         organization="Punjab Information Technology Board",
         source_url="https://example.gov.pk/tenders/123",
         source_name="Filter Source",
-        deadline=datetime(2026, 10, 1, 12, 0, tzinfo=timezone.utc),
+        deadline=datetime(2099, 1, 1, 12, 0, tzinfo=timezone.utc),
         location="Lahore",
         category="Health",
         province="Punjab",

@@ -53,14 +53,14 @@ class TestAdapterWiring:
         for key, spec in SOURCE_REGISTRY.items():
             assert spec.source_name == ADAPTERS[key].source_name
 
-    def test_ci_matrix_covers_every_adapter(self) -> None:
+    def test_ci_collect_loop_covers_every_adapter(self) -> None:
         workflow = WORKFLOW_PATH.read_text(encoding="utf-8")
-        match = re.search(r"adapter:\s*\[([^\]]+)\]", workflow)
-        assert match, "collect.yml has no matrix adapter list"
-        matrix = {item.strip() for item in match.group(1).split(",")}
-        assert matrix == set(ADAPTERS), (
-            "collect.yml matrix out of sync with ADAPTERS: "
-            f"matrix={sorted(matrix)} adapters={sorted(ADAPTERS)}"
+        match = re.search(r"for adapter in ([a-z0-9_ ]+); do", workflow)
+        assert match, "collect.yml has no single-runner adapter loop"
+        covered = {item for item in match.group(1).split()}
+        assert covered == set(ADAPTERS), (
+            "collect.yml adapter loop out of sync with ADAPTERS: "
+            f"workflow={sorted(covered)} adapters={sorted(ADAPTERS)}"
         )
 
     @pytest.mark.parametrize("key", sorted(ADAPTERS))
