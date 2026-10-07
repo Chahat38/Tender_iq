@@ -33,7 +33,7 @@ from typing import Any
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 COLLECTOR_DIR = REPO_ROOT / "collector"
-MIGRATION_SQL = REPO_ROOT / "supabase" / "migrations" / "001_init.sql"
+MIGRATIONS_DIR = REPO_ROOT / "supabase" / "migrations"
 AUTH_SHIM_SQL = REPO_ROOT / "scripts" / "pg_auth_shim.sql"
 
 if str(COLLECTOR_DIR) not in sys.path:
@@ -268,7 +268,7 @@ def _count(conn: Any, table: str) -> int:
 
 
 def apply_schema(conn: Any, verbose: bool = True) -> None:
-    """Apply the auth shim (when needed) and 001_init.sql."""
+    """Apply the auth shim (when needed) and every ``supabase/migrations/*.sql``."""
     with conn.cursor() as cur:
         cur.execute("select to_regclass('auth.users') is null as missing")
         missing_auth = bool(cur.fetchone()["missing"])
@@ -278,11 +278,12 @@ def apply_schema(conn: Any, verbose: bool = True) -> None:
         with conn.cursor() as cur:
             cur.execute(AUTH_SHIM_SQL.read_text(encoding="utf-8"))
         conn.commit()
-    with conn.cursor() as cur:
-        cur.execute(MIGRATION_SQL.read_text(encoding="utf-8"))
-    conn.commit()
-    if verbose:
-        print(f"applied {MIGRATION_SQL.relative_to(REPO_ROOT)}")
+    for sql_path in sorted(MIGRATIONS_DIR.glob("*.sql")):
+        with conn.cursor() as cur:
+            cur.execute(sql_path.read_text(encoding="utf-8"))
+        conn.commit()
+        if verbose:
+            print(f"applied {sql_path.relative_to(REPO_ROOT)}")
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
