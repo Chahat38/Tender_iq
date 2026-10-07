@@ -133,9 +133,15 @@ meant to run on a single box without infrastructure, and 429 +
 | UNDP Pakistan | skip | `robots.txt` `Disallow: /` |
 | Asian Development Bank | skip | 403 bot wall (bypassing it = against terms) |
 | NHA | skip | robots.txt returns 403 (`RobotsUnavailable`) |
-| Sindh portal | skip | could not be verified as automation-friendly |
+| Sindh portal | skip | central `e.pprasindh.gov.pk` listing is a 2010-2019 archive (no live lists); HTTP-only, no separate live feed found |
 | Punjab eProcure | deferred | ASP.NET ViewState postback scraping not worth the fragility yet |
 | WAPDA RSS | dropped | `rssfile.xml?catid=3` returns 404 - the idea died with the endpoint |
+
+Added 2026-10-07, researched and registered as live sources: AJ&K PPRA
+(`www.ajkppra.gov.pk/advertisements.php`, robots.txt 404, server-rendered
+table, notice PDFs) and GB PPRA (`www.gbppra.gov.pk/viewall`, robots.txt
+allow-all, server-rendered cards, `?page=N` pagination). Both are
+listing-only for now (no detail enrichment), like EPADS.
 
 ## Quality tooling
 

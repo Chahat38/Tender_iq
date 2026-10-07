@@ -85,6 +85,34 @@ SOURCE_REGISTRY: dict[str, SourceSpec] = {
         requires_authentication=False,
         crawl_frequency="every 6h",
     ),
+    "ajk_ppra": SourceSpec(
+        key="ajk_ppra",
+        source_name="AJK PPRA",
+        base_url="https://www.ajkppra.gov.pk",
+        adapter_type="AjkPpraAdapter",
+        active=True,
+        # Research 2026-10-07: public "Latest Advertisements" table at
+        # /advertisements.php (server-rendered, no JS wall or login);
+        # robots.txt absent (404 -> no restrictions declared); no terms
+        # forbidding polite automated access found.
+        terms_checked=True,
+        requires_authentication=False,
+        crawl_frequency="every 6h",
+    ),
+    "gb_ppra": SourceSpec(
+        key="gb_ppra",
+        source_name="GB PPRA",
+        base_url="https://www.gbppra.gov.pk",
+        adapter_type="GbPpraAdapter",
+        active=True,
+        # Research 2026-10-07: public "All Procurements" listing at
+        # /viewall (server-rendered cards, no JS wall or login);
+        # robots.txt is allow-all (User-agent: * / Disallow:); no terms
+        # forbidding polite automated access found.
+        terms_checked=True,
+        requires_authentication=False,
+        crawl_frequency="every 6h",
+    ),
 }
 
 
