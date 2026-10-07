@@ -16,13 +16,24 @@ Endpoints:
 * ``GET /health`` -- liveness probe with coarse row counts,
 * ``GET /sources`` -- registered procurement sources,
 * ``GET /locations`` -- distinct locations for the city filter,
-* ``GET /opportunities`` -- newest-first page of opportunities,
+* ``GET /categories`` -- distinct categories for the category filter,
+* ``GET /provinces`` -- distinct provinces for the province filter,
+* ``GET /procurement_types`` -- distinct procurement types for the
+  filter,
+* ``GET /opportunities`` -- newest-first page of opportunities
+  (non-duplicate rows by default; ``sort`` can page by closing deadline),
 * ``POST /opportunities/query`` -- same, with a JSON body for
   tri-state deadline filtering,
 * ``GET /opportunities/{opportunity_id}`` -- one opportunity with
   documents and update history,
+* ``GET /opportunities/{opportunity_id}/duplicates`` -- the same notice
+  as found on other sources,
 * ``GET /opportunities/{opportunity_id}/analysis`` -- the AI analysis
   of one opportunity,
+* ``POST /ai/{analyze,dedup,rfp}`` -- optional LLM assistance
+  (OpenAI-compatible, Grok works) for summaries, duplicate
+  verification and RFP/bid document drafts,
+* ``GET /notifications`` -- "new tenders" and "closing soon" buckets,
 * ``GET /search?q=...`` -- FTS5 full-text search (same strict query
   translation and bm25 ranking as the CLI),
 * ``GET /alerts?user_id=...`` -- user-facing alerts (newest first),
@@ -54,9 +65,9 @@ import threading
 import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Literal, Union
+from typing import Any, Literal, Mapping, Union
 
 from fastapi import FastAPI, HTTPException, Path as FastAPIPath, Query
 from fastapi.responses import JSONResponse
@@ -66,6 +77,8 @@ _SCRIPT_DIR = Path(__file__).resolve().parent
 if str(_SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(_SCRIPT_DIR))
 
+import ai_endpoints  # noqa: E402
+from ai import Analysis, analyze  # noqa: E402
 from search import SearchIndex  # noqa: E402
 from storage import NULL_DEADLINE_FILTER, Storage  # noqa: E402
 from storage_postgres import PostgresStorage  # noqa: E402
@@ -151,6 +164,56 @@ class OpportunityDetailOut(OpportunityOut):
 
     documents: list[DocumentOut] = Field(default_factory=list)
     updates: list[UpdateOut] = Field(default_factory=list)
+
+
+class DuplicateOut(BaseModel):
+    """A sibling listing of the same tender notice on another source."""
+
+    id: int
+    source_id: int
+    source_name: str | None = None
+    title: str | None = None
+    organization: str | None = None
+    deadline: str | None = None
+    source_url: str | None = None
+    is_primary: bool = False
+
+
+class NotificationsOut(BaseModel):
+    """Notification buckets the UI turns into alert cards."""
+
+    generated_at: str
+    window_days: int
+    new_tenders: list[OpportunityOut]
+    new_total: int
+    closing_soon: list[OpportunityOut]
+    closing_total: int
+
+
+class AiDedupRequest(BaseModel):
+    """Candidate duplicate group for the /ai/dedup verifier."""
+
+    opportunity_ids: list[int] = Field(
+        ...,
+        min_length=2,
+        max_length=10,
+        description="Two or more listings believed to be the same notice.",
+    )
+
+    @field_validator("opportunity_ids")
+    @classmethod
+    def _positive_ids(cls, value: list[int]) -> list[int]:
+        if any(opportunity_id < 1 for opportunity_id in value):
+            raise ValueError("opportunity ids must be positive")
+        return value
+
+
+class AiRfpRequest(BaseModel):
+    """Inputs for the bid/RFP document draft."""
+
+    opportunity_id: int = Field(..., ge=1)
+    company_name: str = Field("", max_length=200)
+    capabilities: list[str] = Field(default_factory=list, max_length=20)
 
 
 class AnalysisOut(BaseModel):
@@ -282,6 +345,36 @@ class OpportunityFilter(BaseModel):
         description="Keep rows whose location contains this text "
         "(case-insensitive substring; scraped locations are free text).",
     )
+    category: str | None = Field(
+        None,
+        max_length=120,
+        description="Keep rows whose stored category equals this value "
+        "case-insensitively (use /categories for valid values).",
+    )
+    organization: str | None = Field(
+        None,
+        max_length=160,
+        description="Keep rows whose organization contains this text "
+        "(case-insensitive substring).",
+    )
+    province: str | None = Field(
+        None,
+        max_length=60,
+        description="Keep rows whose stored province equals this value "
+        "case-insensitively (use /provinces for valid values).",
+    )
+    deadline_from: str | None = Field(
+        None,
+        pattern=r"^\d{4}-\d{2}-\d{2}$",
+        description="Only deadlines on or after this date (YYYY-MM-DD, "
+        "inclusive on the deadline's Pakistan-local date; undated rows drop out).",
+    )
+    deadline_to: str | None = Field(
+        None,
+        pattern=r"^\d{4}-\d{2}-\d{2}$",
+        description="Only deadlines on or before this date (YYYY-MM-DD, "
+        "inclusive; undated rows drop out).",
+    )
     deadline_before: datetime | None = Field(
         None,
         description="Only rows with a deadline strictly before this ISO datetime.",
@@ -290,6 +383,23 @@ class OpportunityFilter(BaseModel):
         None,
         description="false hides rows without a deadline; null keeps them; "
         "a datetime keeps only later deadlines.",
+    )
+    procurement_type: str | None = Field(
+        None,
+        max_length=80,
+        description="Keep rows whose stored procurement type equals this "
+        "value case-insensitively (use /procurement_types for valid values).",
+    )
+    sort: Literal["newest", "closing"] = Field(
+        "newest",
+        description="newest = insertion order (default); "
+        "closing = soonest deadline first, undated rows last.",
+    )
+    include_duplicates: bool = Field(
+        False,
+        description="By default one row per tender notice (the same notice "
+        "posted on several sources collapses to the primary listing). "
+        "Set true to include every duplicate row.",
     )
 
     @field_validator("deadline_after")
@@ -307,6 +417,21 @@ def _default_db_path() -> str:
         "TENDERSCOUT_DB_PATH",
         str(Path(__file__).resolve().parent / "tenderscout.db"),
     )
+
+
+def _deterministic_summary(row: Mapping[str, Any], analysis: Analysis) -> str:
+    """One-sentence fallback summary (used when no LLM is configured)."""
+    title = row.get("title") or "A tender notice"
+    org = row.get("organization") or "an undisclosed buyer"
+    category = analysis.category or row.get("category")
+    parts = [title, f"issued by {org}"]
+    if category:
+        parts.append(f"in the {category} field")
+    if row.get("deadline"):
+        parts.append(f"closes {str(row['deadline'])[:10]}")
+    if row.get("location"):
+        parts.append(f"at {row['location']}")
+    return f"{', '.join(parts)}."
 
 
 def create_app(db_path: str | Path | None = None) -> FastAPI:
@@ -466,6 +591,14 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
         location: str | None,
         deadline_before: datetime | None,
         deadline_after: Any,
+        category: str | None = None,
+        organization: str | None = None,
+        province: str | None = None,
+        deadline_from: str | None = None,
+        deadline_to: str | None = None,
+        procurement_type: str | None = None,
+        sort: str = "newest",
+        include_duplicates: bool = False,
     ) -> OpportunityPage:
         """Shared read path for GET /opportunities and the POST filter."""
         with data_lock:
@@ -477,12 +610,27 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
                 location=location,
                 deadline_before=deadline_before,
                 deadline_after=deadline_after,
+                category=category,
+                organization=organization,
+                province=province,
+                deadline_from=deadline_from,
+                deadline_to=deadline_to,
+                primary_only=not include_duplicates,
+                procurement_type=procurement_type,
+                sort=sort,
             )
             total = storage.count_opportunities(
                 source_id=source_id,
                 location=location,
                 deadline_before=deadline_before,
                 deadline_after=deadline_after,
+                category=category,
+                organization=organization,
+                province=province,
+                deadline_from=deadline_from,
+                deadline_to=deadline_to,
+                primary_only=not include_duplicates,
+                procurement_type=procurement_type,
             )
         return OpportunityPage(
             total=total,
@@ -502,10 +650,18 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
                 "health": "/health",
                 "sources": "/sources",
                 "locations": "/locations",
+                "categories": "/categories",
+                "provinces": "/provinces",
+                "procurement_types": "/procurement_types",
                 "opportunities": "/opportunities",
                 "opportunity_query": "POST /opportunities/query",
                 "opportunity": "/opportunities/{opportunity_id}",
+                "opportunity_duplicates": "/opportunities/{opportunity_id}/duplicates",
                 "opportunity_analysis": "/opportunities/{opportunity_id}/analysis",
+                "ai_analyze": "POST /ai/analyze/{opportunity_id}",
+                "ai_dedup": "POST /ai/dedup",
+                "ai_rfp": "POST /ai/rfp",
+                "notifications": "/notifications",
                 "search": "/search?q=QUERY",
                 "alerts": "/alerts?user_id=USER_ID",
                 "matches": "/matches?user_id=USER_ID",
@@ -546,6 +702,36 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
             description="Keep rows whose location contains this text "
             "(case-insensitive substring; scraped locations are free text).",
         ),
+        category: str | None = Query(
+            None,
+            max_length=120,
+            description="Keep rows whose stored category equals this value "
+            "case-insensitively (use /categories for valid values).",
+        ),
+        organization: str | None = Query(
+            None,
+            max_length=160,
+            description="Keep rows whose organization contains this text "
+            "(case-insensitive substring).",
+        ),
+        province: str | None = Query(
+            None,
+            max_length=60,
+            description="Keep rows whose stored province equals this value "
+            "case-insensitively (use /provinces for valid values).",
+        ),
+        deadline_from: str | None = Query(
+            None,
+            pattern=r"^\d{4}-\d{2}-\d{2}$",
+            description="Only deadlines on or after this date (YYYY-MM-DD, "
+            "inclusive on the deadline's Pakistan-local date; undated rows drop out).",
+        ),
+        deadline_to: str | None = Query(
+            None,
+            pattern=r"^\d{4}-\d{2}-\d{2}$",
+            description="Only deadlines on or before this date (YYYY-MM-DD, "
+            "inclusive; undated rows drop out).",
+        ),
         deadline_before: datetime | None = Query(
             None,
             description="Only rows with a deadline strictly before this datetime.",
@@ -555,17 +741,47 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
             description="Only rows with a strictly later deadline; rows without "
             "a deadline then drop out (use POST /opportunities/query to keep them).",
         ),
+        procurement_type: str | None = Query(
+            None,
+            max_length=80,
+            description="Keep rows whose stored procurement type equals this "
+            "value case-insensitively (use /procurement_types for valid values).",
+        ),
+        sort: Literal["newest", "closing"] = Query(
+            "newest",
+            description="newest = insertion order (default); "
+            "closing = soonest deadline first, undated rows last.",
+        ),
+        include_duplicates: bool = Query(
+            False,
+            description="By default one row per tender notice (the same notice "
+            "posted on several sources collapses to the primary listing). Set "
+            "true to include every duplicate row.",
+        ),
     ) -> OpportunityPage:
-        """Newest-first page of opportunities (insertion/crawl order)."""
+        """Page of tenders, one row per notice by default.
+
+        ``sort=closing`` orders by soonest deadline (undated rows
+        last); ``include_duplicates=true`` is the internal/admin view
+        that shows the same notice as reported by every source.
+        """
         return _query_opportunities(
             limit=limit,
             offset=offset,
             source_id=source_id,
             location=location,
+            category=category,
+            organization=organization,
+            province=province,
+            deadline_from=deadline_from,
+            deadline_to=deadline_to,
             deadline_before=deadline_before,
             deadline_after=(
                 deadline_after if deadline_after is not None else NULL_DEADLINE_FILTER
             ),
+            procurement_type=procurement_type,
+            sort=sort,
+            include_duplicates=include_duplicates,
         )
 
     @app.get("/locations", response_model=list[str], tags=["opportunities"])
@@ -574,6 +790,27 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
         for the city filter; values are opaque scraped text)."""
         with data_lock:
             return _get_storage().list_distinct_locations()
+
+    @app.get("/categories", response_model=list[str], tags=["opportunities"])
+    def list_categories() -> list[str]:
+        """Distinct stored categories (facet for the category filter;
+        values are opaque scraped labels, lowercase)."""
+        with data_lock:
+            return _get_storage().list_distinct_categories()
+
+    @app.get("/provinces", response_model=list[str], tags=["opportunities"])
+    def list_provinces() -> list[str]:
+        """Distinct stored provinces (facet for the province filter;
+        adapter-written, lowercase)."""
+        with data_lock:
+            return _get_storage().list_distinct_provinces()
+
+    @app.get("/procurement_types", response_model=list[str], tags=["opportunities"])
+    def list_procurement_types() -> list[str]:
+        """Distinct stored procurement types, most common first (facet
+        for the procurement_type filter; values are scraped labels)."""
+        with data_lock:
+            return _get_storage().list_distinct_procurement_types()
 
     @app.post(
         "/opportunities/query",
@@ -597,8 +834,16 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
             offset=body.offset,
             source_id=body.source_id,
             location=body.location,
+            category=body.category,
+            organization=body.organization,
+            province=body.province,
+            deadline_from=body.deadline_from,
+            deadline_to=body.deadline_to,
             deadline_before=body.deadline_before,
             deadline_after=deadline_after,
+            procurement_type=body.procurement_type,
+            sort=body.sort,
+            include_duplicates=body.include_duplicates,
         )
 
     @app.get(
@@ -653,6 +898,31 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
                 )
         return AnalysisOut(**analysis)
 
+    @app.get(
+        "/opportunities/{opportunity_id}/duplicates",
+        response_model=list[DuplicateOut],
+        tags=["opportunities"],
+    )
+    def get_opportunity_duplicates(
+        opportunity_id: int = FastAPIPath(..., ge=1),
+    ) -> list[DuplicateOut]:
+        """The same tender notice as published by other sources.
+
+        The dedup pass groups notices it believes are identical (same
+        reference number/title across sources); ``/opportunities``
+        shows the primary row only, this endpoint surfaces the group.
+        Answers an empty list for ungrouped rows.
+        """
+        with data_lock:
+            storage = _get_storage()
+            if storage.get_opportunity(opportunity_id) is None:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"opportunity {opportunity_id} not found",
+                )
+            rows = storage.list_duplicates(opportunity_id)
+        return [DuplicateOut(**row) for row in rows]
+
     @app.get("/alerts", response_model=list[AlertOut], tags=["alerts"])
     def list_alerts(
         user_id: str = Query(
@@ -692,6 +962,12 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
         ),
         limit: int = Query(20, ge=0, le=_API_LIMIT_MAX),
         offset: int = Query(0, ge=0),
+        include_duplicates: bool = Query(
+            False,
+            description="By default one hit per tender notice (duplicate "
+            "rows collapse to their primary listing). Set true to include "
+            "every duplicate row.",
+        ),
     ) -> SearchPage:
         """Full-text search (FTS5 bm25-ranked; lower rank = better).
 
@@ -700,11 +976,14 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
         same strict query contract (every word must match, the last
         word matches as a prefix).
         """
+        primary_only = not include_duplicates
         storage = _get_storage()
         if isinstance(storage, PostgresStorage):
             with data_lock:
-                total = storage.search_count(q)
-                results = storage.search(q, limit=limit, offset=offset)
+                total = storage.search_count(q, primary_only=primary_only)
+                results = storage.search(
+                    q, limit=limit, offset=offset, primary_only=primary_only
+                )
             return SearchPage(
                 query=q,
                 total=total,
@@ -715,8 +994,10 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
         index = _get_index()
         try:
             with data_lock:
-                results = index.search(q, limit=limit, offset=offset)
-                total = index.count(q)
+                results = index.search(
+                    q, limit=limit, offset=offset, primary_only=primary_only
+                )
+                total = index.count(q, primary_only=primary_only)
         except ValueError as exc:
             # search() raises ValueError only for negative paging args,
             # which the ge=0 query constraints already prevent; kept as
@@ -729,6 +1010,183 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
             offset=offset,
             results=[SearchHitOut(**vars(hit)) for hit in results],
         )
+
+    @app.get("/notifications", response_model=NotificationsOut, tags=["notifications"])
+    def notifications(
+        window_days: int = Query(
+            7,
+            ge=1,
+            le=90,
+            description="Look-back/look-ahead window in days. The UI calls "
+            "this for 1/3/7/30-day buckets and picks its own thresholds.",
+        ),
+        limit: int = Query(50, ge=1, le=_API_LIMIT_MAX),
+    ) -> NotificationsOut:
+        """"New tenders" and "closing soon" buckets.
+
+        ``new_tenders`` are primary rows first published within the
+        window (newest first); ``closing_soon`` are primary rows whose
+        deadline falls within the window (soonest first). The UI uses
+        these for the notifications page and the browser Notification
+        API. Only primary rows appear - duplicates are never notified.
+        """
+        with data_lock:
+            storage = _get_storage()
+            new_rows = storage.list_new_tenders(window_days, limit=limit)
+            closing = storage.list_closing_soon(window_days, limit=limit)
+        now_iso = datetime.now(timezone.utc).isoformat()
+        return NotificationsOut(
+            generated_at=now_iso,
+            window_days=window_days,
+            new_tenders=[OpportunityOut(**row) for row in new_rows],
+            new_total=len(new_rows),
+            closing_soon=[OpportunityOut(**row) for row in closing],
+            closing_total=len(closing),
+        )
+
+    @app.post("/ai/analyze/{opportunity_id}", tags=["ai"])
+    def ai_analyze(
+        opportunity_id: int = FastAPIPath(..., ge=1),
+    ) -> dict[str, Any]:
+        """Analyze one tender: deterministic classification, plus an LLM
+        prose summary when a key is configured.
+
+        Unlike ``GET /opportunities/{id}/analysis`` this never 404s on
+        an unrun pipeline - the deterministic rules run on the spot.
+        LLM failures degrade gracefully to the deterministic answer.
+        """
+        with data_lock:
+            storage = _get_storage()
+            row = storage.get_opportunity(opportunity_id)
+            if row is None:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"opportunity {opportunity_id} not found",
+                )
+            analysis = analyze(row)
+            llm_on = ai_endpoints.llm_available()
+            suggestion = None
+            if llm_on:
+                try:
+                    suggestion = ai_endpoints.analyze_suggestion(row, analysis)
+                except Exception as exc:  # noqa: BLE001 - degrade, never 500
+                    logger.warning("LLM analyze failed for %s: %s", opportunity_id, exc)
+        if suggestion is not None:
+            summary = suggestion["summary"]
+            fit_hints = suggestion["fit_hints"]
+            red_flags = suggestion["red_flags"]
+            provider = "llm"
+            model = (ai_endpoints.llm_settings() or {}).get("model")
+        else:
+            summary = _deterministic_summary(row, analysis)
+            fit_hints = []
+            red_flags = list(analysis.date_conflicts)
+            provider = "deterministic"
+            model = "deterministic-v1"
+        return {
+            "opportunity_id": opportunity_id,
+            "llm_available": llm_on,
+            "provider": provider,
+            "model": model,
+            "prompt_version": ai_endpoints.AI_PROMPT_VERSION,
+            "category": analysis.category,
+            "subcategory": analysis.subcategory,
+            "keywords": analysis.keywords,
+            "procurement_type": analysis.procurement_type,
+            "requirements": analysis.requirements,
+            "date_conflicts": analysis.date_conflicts,
+            "summary": summary,
+            "fit_hints": fit_hints,
+            "red_flags": red_flags,
+        }
+
+    @app.post("/ai/dedup", tags=["ai"])
+    def ai_dedup(body: AiDedupRequest) -> dict[str, Any]:
+        """Verify a candidate duplicate group is really one tender.
+
+        With an LLM the model compares the listings and suggests
+        canonical fields; without one, a deterministic reference/title
+        scorer answers. Unknown ids are skipped; fewer than two known
+        listings is a 422.
+        """
+        with data_lock:
+            storage = _get_storage()
+            rows = [
+                storage.get_opportunity(opportunity_id)
+                for opportunity_id in dict.fromkeys(body.opportunity_ids)
+            ]
+        rows = [row for row in rows if row is not None]
+        if len(rows) < 2:
+            raise HTTPException(
+                status_code=422,
+                detail="need at least two known opportunities to compare",
+            )
+        llm_on = ai_endpoints.llm_available()
+        verdict: dict[str, Any]
+        if llm_on:
+            try:
+                verdict = ai_endpoints.dedup_verify(rows)
+            except Exception as exc:  # noqa: BLE001 - degrade to the scorer
+                logger.warning("LLM dedup failed (%s); using deterministic", exc)
+                verdict = ai_endpoints.dedup_verify_deterministic(rows)
+        else:
+            verdict = ai_endpoints.dedup_verify_deterministic(rows)
+        return {
+            "llm_available": llm_on,
+            "same_tender": verdict["same_tender"],
+            "confidence": verdict["confidence"],
+            "reason": verdict["reason"],
+            "canonical": verdict["canonical"],
+            "listings": [
+                {
+                    "opportunity_id": row["id"],
+                    "source_name": row.get("source_name"),
+                    "reference_number": row.get("reference_number"),
+                    "title": row.get("title"),
+                    "organization": row.get("organization"),
+                    "deadline": row.get("deadline"),
+                    "source_url": row.get("source_url"),
+                }
+                for row in rows
+            ],
+        }
+
+    @app.post("/ai/rfp", tags=["ai"])
+    def ai_rfp(body: AiRfpRequest) -> dict[str, Any]:
+        """Draft a bid/RFP document for one tender.
+
+        This genuinely needs an LLM (a key must be configured); without
+        one it answers 503. The result is a draft - the bidder remains
+        responsible for the tender's exact terms.
+        """
+        if not ai_endpoints.llm_available():
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    "RFP drafting needs an LLM API key (OPENAI_API_KEY; "
+                    "Grok via OPENAI_BASE_URL=https://api.x.ai/v1)"
+                ),
+            )
+        with data_lock:
+            storage = _get_storage()
+            row = storage.get_opportunity(body.opportunity_id)
+            if row is None:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"opportunity {body.opportunity_id} not found",
+                )
+        try:
+            return ai_endpoints.rfp_draft(
+                row,
+                body.company_name,
+                [str(item) for item in body.capabilities],
+            )
+        except Exception as exc:  # noqa: BLE001 - LLM errors are a 502
+            logger.error("LLM RFP draft failed: %s", exc)
+            raise HTTPException(
+                status_code=502,
+                detail=f"LLM request failed: {type(exc).__name__}",
+            ) from exc
 
     return app
 

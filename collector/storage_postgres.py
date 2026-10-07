@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import logging
 import os
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 from uuid import uuid4
 
@@ -1004,14 +1004,25 @@ class PostgresStorage:
         deadline_before: Any = None,
         deadline_after: Any = None,
         location: str | None = None,
+        category: str | None = None,
+        organization: str | None = None,
+        province: str | None = None,
+        deadline_from: str | None = None,
+        deadline_to: str | None = None,
+        primary_only: bool = True,
+        procurement_type: str | None = None,
+        sort: str = "newest",
     ) -> list[dict[str, Any]]:
         """Return a page of opportunities, newest first, as plain dicts.
 
         Same semantics as :meth:`storage.Storage.list_opportunities`
         (Postgres flavour): ``id`` descending, ``limit``/``offset``
-        clamped and validated, ``location`` is an ASCII case-insensitive
-        substring match, ``deadline_before``/``deadline_after`` are ISO
-        datetimes with the same open/closed window rules.
+        clamped and validated, ``location``/``organization`` are ASCII
+        case-insensitive substring matches, ``category``/``province``
+        are exact-after-lower facet matches, ``deadline_before``/
+        ``deadline_after`` are ISO datetimes with the same open/closed
+        window rules. ``primary_only`` (default), ``procurement_type``
+        and ``sort=closing`` mirror the SQLite backend.
         """
         limit = int(limit)
         offset = int(offset)
@@ -1024,7 +1035,20 @@ class PostgresStorage:
             deadline_before=deadline_before,
             deadline_after=deadline_after,
             location=location,
+            category=category,
+            organization=organization,
+            province=province,
+            deadline_from=deadline_from,
+            deadline_to=deadline_to,
+            primary_only=primary_only,
+            procurement_type=procurement_type,
         )
+        if sort == "closing":
+            order_by = (
+                "(o.deadline IS NULL) ASC, o.deadline ASC, o.id DESC"
+            )
+        else:
+            order_by = "o.id DESC"
         with self.conn.cursor() as cur:
             cur.execute(
                 f"SELECT o.id, o.source_id, o.external_id, o.reference_number, "
@@ -1033,7 +1057,7 @@ class PostgresStorage:
                 "o.procurement_type, o.content_hash, o.first_seen_at, "
                 "o.last_seen_at, o.last_verified_at "
                 f"FROM opportunities o{clause} "
-                "ORDER BY o.id DESC LIMIT %s OFFSET %s",
+                f"ORDER BY {order_by} LIMIT %s OFFSET %s",
                 (*params, limit, offset),
             )
             rows = cur.fetchall()
@@ -1045,6 +1069,13 @@ class PostgresStorage:
         deadline_before: Any = None,
         deadline_after: Any = None,
         location: str | None = None,
+        category: str | None = None,
+        organization: str | None = None,
+        province: str | None = None,
+        deadline_from: str | None = None,
+        deadline_to: str | None = None,
+        primary_only: bool = True,
+        procurement_type: str | None = None,
     ) -> int:
         """Count opportunities matching the list_opportunities filters.
 
@@ -1056,27 +1087,41 @@ class PostgresStorage:
             deadline_before=deadline_before,
             deadline_after=deadline_after,
             location=location,
+            category=category,
+            organization=organization,
+            province=province,
+            deadline_from=deadline_from,
+            deadline_to=deadline_to,
+            primary_only=primary_only,
+            procurement_type=procurement_type,
         )
         with self.conn.cursor() as cur:
             cur.execute(
                 f"SELECT COUNT(*) AS n FROM opportunities o{clause}", params
             )
             row = cur.fetchone()
-        return int(row["n"])
-
-    @staticmethod
+        return int(row["n"])    @staticmethod
     def _opportunity_filter_params(
         source_id: int | None,
         deadline_before: Any,
         deadline_after: Any,
         location: str | None = None,
+        category: str | None = None,
+        organization: str | None = None,
+        province: str | None = None,
+        deadline_from: str | None = None,
+        deadline_to: str | None = None,
+        primary_only: bool = True,
+        procurement_type: str | None = None,
     ) -> tuple[str, list[Any]]:
         """Build the WHERE clause shared by the two read methods.
 
-        ``deadline_after`` uses the :data:`NULL_DEADLINE_FILTER`
-        sentinel for "no lower bound"; ``None`` hides undated rows -
+        ``deadline_after`` uses the :data:`NULL_DEADLINE_FILTER` sentinel
+        for "no lower bound"; ``None`` hides undated rows -
         the same contract as storage.py so both backends filter
-        identically from the API's point of view.
+        identically from the API's point of view. ``primary_only``
+        (default) hides duplicate rows; ``procurement_type`` is a
+        case-insensitive exact facet match.
         """
         from storage_common import NULL_DEADLINE_FILTER
 
@@ -1088,6 +1133,32 @@ class PostgresStorage:
         if location:
             where.append("o.location ILIKE %s")
             params.append(f"%{location}%")
+        if category:
+            where.append("o.category IS NOT NULL AND lower(o.category) = %s")
+            params.append(category.lower())
+        if organization:
+            where.append("o.organization ILIKE %s")
+            params.append(f"%{organization}%")
+        if province:
+            where.append("o.province IS NOT NULL AND lower(o.province) = %s")
+            params.append(province.lower())
+        if procurement_type:
+            where.append(
+                "o.procurement_type IS NOT NULL AND "
+                "lower(o.procurement_type) = lower(%s)"
+            )
+            params.append(procurement_type)
+        if deadline_from:
+            # Date-only inclusive lower bound on the deadline's local date.
+            where.append(
+                "o.deadline IS NOT NULL AND substring(o.deadline from 1 for 10) >= %s"
+            )
+            params.append(deadline_from)
+        if deadline_to:
+            where.append(
+                "o.deadline IS NOT NULL AND substring(o.deadline from 1 for 10) <= %s"
+            )
+            params.append(deadline_to)
         if deadline_before is not None:
             where.append("o.deadline IS NOT NULL AND o.deadline < %s")
             params.append(deadline_before)
@@ -1097,6 +1168,8 @@ class PostgresStorage:
             else:
                 where.append("(o.deadline IS NOT NULL AND o.deadline > %s)")
                 params.append(deadline_after)
+        if primary_only:
+            where.append("o.is_primary = TRUE")
         clause = f" WHERE {' AND '.join(where)}" if where else ""
         return clause, params
 
@@ -1112,6 +1185,122 @@ class PostgresStorage:
             rows = cur.fetchall()
         return [str(row["location"]) for row in rows]
 
+    def list_distinct_categories(self) -> list[str]:
+        """Every distinct non-empty category, lowercased and sorted.
+
+        Mirrors :meth:`storage.Storage.list_distinct_categories` so both
+        backends serve the same facet from the same contract.
+        """
+        with self.conn.cursor() as cur:
+            cur.execute(
+                "SELECT DISTINCT lower(category) AS category FROM opportunities "
+                "WHERE category IS NOT NULL AND category <> '' "
+                "ORDER BY category"
+            )
+            rows = cur.fetchall()
+        return [str(row["category"]) for row in rows]
+
+    def list_distinct_provinces(self) -> list[str]:
+        """Every distinct non-empty province, lowercased and sorted.
+
+        Mirrors :meth:`storage.Storage.list_distinct_provinces`.
+        """
+        with self.conn.cursor() as cur:
+            cur.execute(
+                "SELECT DISTINCT lower(province) AS province FROM opportunities "
+                "WHERE province IS NOT NULL AND province <> '' "
+                "ORDER BY province"
+            )
+            rows = cur.fetchall()
+        return [str(row["province"]) for row in rows]
+
+    def list_distinct_procurement_types(self) -> list[str]:
+        """Distinct procurement types, most common first (Postgres).
+
+        Mirrors :meth:`storage.Storage.list_distinct_procurement_types`.
+        """
+        with self.conn.cursor() as cur:
+            cur.execute(
+                "SELECT procurement_type AS label, COUNT(*) AS n "
+                "FROM opportunities "
+                "WHERE procurement_type IS NOT NULL AND procurement_type <> '' "
+                "GROUP BY lower(procurement_type) "
+                "ORDER BY n DESC, label"
+            )
+            rows = cur.fetchall()
+        return [str(row["label"]) for row in rows]
+
+    def list_duplicates(self, opportunity_id: int) -> list[dict[str, Any]]:
+        """Sibling rows in the same duplicate group, oldest first.
+
+        Mirrors :meth:`storage.Storage.list_duplicates` semantics: the
+        opportunity itself is excluded; ungrouped rows answer [].
+        """
+        with self.conn.cursor() as cur:
+            cur.execute(
+                "SELECT duplicate_group_id FROM opportunities WHERE id = %s",
+                (opportunity_id,),
+            )
+            group_row = cur.fetchone()
+            if group_row is None or group_row["duplicate_group_id"] is None:
+                return []
+            cur.execute(
+                "SELECT id, source_id, source_name, title, organization, "
+                "deadline, source_url, is_primary FROM opportunities "
+                "WHERE duplicate_group_id = %s AND id <> %s "
+                "ORDER BY first_seen_at, id",
+                (group_row["duplicate_group_id"], opportunity_id),
+            )
+            rows = [_serialise(r) for r in cur.fetchall()] or []
+        return [dict(r) for r in rows]
+
+    def list_new_tenders(
+        self, days: int, limit: int = 50, *, now: Any = None
+    ) -> list[dict[str, Any]]:
+        """Primary rows published within the window, newest first."""
+        now = now or datetime.now(timezone.utc)
+        cutoff = (now - timedelta(days=days)).isoformat()
+        limit = min(max(int(limit), 0), 500)
+        with self.conn.cursor() as cur:
+            cur.execute(
+                "SELECT o.id, o.source_id, o.external_id, o.reference_number, "
+                "o.title, o.organization, o.description, o.source_url, "
+                "o.published_at, o.deadline, o.location, o.category, "
+                "o.procurement_type, o.content_hash, o.first_seen_at, "
+                "o.last_seen_at, o.last_verified_at "
+                "FROM opportunities o "
+                "WHERE o.is_primary = TRUE AND o.published_at IS NOT NULL "
+                "AND o.published_at >= %s "
+                "ORDER BY o.published_at DESC, o.id DESC LIMIT %s",
+                (cutoff, limit),
+            )
+            rows = cur.fetchall()
+        return [_serialise(row) for row in rows]
+
+    def list_closing_soon(
+        self, days: int, limit: int = 50, *, now: Any = None
+    ) -> list[dict[str, Any]]:
+        """Primary rows whose deadline is within the window, soonest first."""
+        now = now or datetime.now(timezone.utc)
+        today = now.isoformat()
+        horizon = (now + timedelta(days=days)).isoformat()
+        limit = min(max(int(limit), 0), 500)
+        with self.conn.cursor() as cur:
+            cur.execute(
+                "SELECT o.id, o.source_id, o.external_id, o.reference_number, "
+                "o.title, o.organization, o.description, o.source_url, "
+                "o.published_at, o.deadline, o.location, o.category, "
+                "o.procurement_type, o.content_hash, o.first_seen_at, "
+                "o.last_seen_at, o.last_verified_at "
+                "FROM opportunities o "
+                "WHERE o.is_primary = TRUE AND o.deadline IS NOT NULL "
+                "AND o.deadline >= %s AND o.deadline <= %s "
+                "ORDER BY o.deadline ASC, o.id DESC LIMIT %s",
+                (today, horizon, limit),
+            )
+            rows = cur.fetchall()
+        return [_serialise(row) for row in rows]
+
     # ------------------------------------------------------------------
     # search (read) - Postgres fallback for the SQLite-only FTS5 index.
     # Mirrors search.SearchIndex semantics: every word must match (AND),
@@ -1124,7 +1313,8 @@ class PostgresStorage:
         return _PG_TOKEN_RE.findall((user_query or "").lower())[:_PG_QUERY_MAX_TOKENS]
 
     def search(
-        self, user_query: str, limit: int = 20, offset: int = 0
+        self, user_query: str, limit: int = 20, offset: int = 0, *,
+        primary_only: bool = True,
     ) -> list[SearchResult]:
         """Search stored opportunities; best matches first.
 
@@ -1133,7 +1323,8 @@ class PostgresStorage:
         contract as :meth:`search.SearchIndex.search`, implemented with
         an ILIKE clause per token plus a match-count rank (returned as a
         negative float so lower = more relevant, like bm25). Queries
-        without word tokens return no results.
+        without word tokens return no results. ``primary_only``
+        (default) returns non-duplicate rows only.
         """
         tokens = self._search_tokens(user_query)
         if not tokens:
@@ -1147,6 +1338,10 @@ class PostgresStorage:
             return []
 
         where, w_params, rank_sql, r_params = self._search_clause(tokens)
+        if primary_only and where:
+            where = where.replace(
+                " WHERE ", " WHERE o.is_primary = TRUE AND ", 1
+            )
         with self.conn.cursor() as cur:
             cur.execute(
                 "SELECT o.id, o.source_id, o.external_id, o.reference_number, "
@@ -1160,17 +1355,24 @@ class PostgresStorage:
             rows = cur.fetchall()
         return [self._search_hit(row) for row in rows]
 
-    def search_count(self, user_query: str) -> int:
+    def search_count(
+        self, user_query: str, primary_only: bool = True
+    ) -> int:
         """Return how many stored opportunities match ``user_query``.
 
         Same strict query translation as :meth:`search` (tokens ANDed,
         the last token matches as a prefix) but no ranking work. Queries
-        without word tokens match nothing and return 0.
+        without word tokens match nothing and return 0. ``primary_only``
+        (default) counts non-duplicate rows only.
         """
         tokens = self._search_tokens(user_query)
         if not tokens:
             return 0
         where, w_params, _, _ = self._search_clause(tokens)
+        if primary_only and where:
+            where = where.replace(
+                " WHERE ", " WHERE o.is_primary = TRUE AND ", 1
+            )
         with self.conn.cursor() as cur:
             cur.execute(
                 f"SELECT COUNT(*) AS n FROM opportunities o{where}", w_params

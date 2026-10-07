@@ -140,6 +140,38 @@ SOURCE_REGISTRY: dict[str, SourceSpec] = {
         requires_authentication=False,
         crawl_frequency="every 6h",
     ),
+    "sindh_sppra": SourceSpec(
+        key="sindh_sppra",
+        source_name="SPPRA Sindh",
+        base_url="http://e.pprasindh.gov.pk",
+        adapter_type="SindhSppraAdapter",
+        active=True,
+        # Research 2026-10-07: public "Tenders List" table at
+        # /tenderlst (server-rendered, no login); robots.txt is a bare
+        # "Disallow:\n" = allow-all, fetched and verified by hand; no
+        # terms forbidding polite automated access found.
+        terms_checked=True,
+        requires_authentication=False,
+        crawl_frequency="every 6h",
+    ),
+    "punjab_eproc": SourceSpec(
+        key="punjab_eproc",
+        source_name="Punjab eProcurement",
+        base_url="https://eproc.punjab.gov.pk",
+        adapter_type="PunjabEprocAdapter",
+        active=True,
+        # Research 2026-10-07: public tender-search grid at
+        # /Admin_Tender_Search.aspx linked from ppra.punjab.gov.pk; it
+        # is a plain browser GET (stateful POST pager), no login or CAPTCHA;
+        # robots.txt is a 404 -> no restrictions declared. No terms
+        # forbidding polite automated access were found. NOTE: the
+        # host's TLS fetch is flaky for non-browser clients; the adapter
+        # falls back to Google Chrome headless so the polite crawler's
+        # bot UA and rate limits still apply to a rendered fetch.
+        terms_checked=True,
+        requires_authentication=False,
+        crawl_frequency="every 6h",
+    ),
 }
 
 
