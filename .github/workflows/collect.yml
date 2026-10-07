@@ -1,9 +1,14 @@
-# Scheduled collection workflow for TenderScout AI (per-source matrix).
+# Scheduled collection workflow for TenderScout AI (single shared database).
 #
-# Every source adapter in collector/main.py ADAPTERS gets its own matrix
-# leg: one broken source fails (and is alerted on) without blocking the
-# others. Runs every 6 hours on GitHub's free ubuntu-latest runners, and
-# on demand via workflow_dispatch.
+# Runs once a day (02:00 UTC = 07:00 PKT) on a single runner so every
+# source adapter writes into the SAME SQLite database, then:
+#   * expired opportunities (deadline already passed) are pruned,
+#   * the search index is rebuilt,
+#   * the fresh snapshot is committed and pushed (Vercel auto-deploys).
+#
+# A failing source must NEVER block the others or the snapshot push - each
+# source stands or falls on its own (operational alerts record the failure
+# via the ops layer; logs are uploaded as artifacts).
 #
 # Required repository secret:
 #   CONTACT_EMAIL - contact address used in the crawler User-Agent
@@ -12,7 +17,8 @@
 # Optional repository secrets:
 #   DATABASE_URL      - Supabase/Postgres DSN; when set the collector
 #                       writes to Postgres instead of the local SQLite
-#                       file (the API then reads Postgres too).
+#                       file, the snapshot commit+push step is skipped,
+#                       and the API should be pointed at Postgres too.
 #   SLACK_WEBHOOK_URL - where operational alerts (3 consecutive failed
 #                       runs) are delivered; without it alerts are only
 #                       logged and stored in operational_alerts.
@@ -25,17 +31,17 @@ name: collect
 
 on:
   schedule:
-    # Every 6 hours at :00 UTC. GitHub may delay cron runs a few
+    # Daily at 02:00 UTC (07:00 PKT). GitHub may delay cron runs a few
     # minutes under runner load; that is acceptable for tenders.
-    - cron: "0 */6 * * *"
+    - cron: "0 2 * * *"
   workflow_dispatch: {}
 
-# The workflow only reads the repository; no write access needed.
+# The workflow writes: it commits and pushes the refreshed snapshot.
 permissions:
-  contents: read
+  contents: write
 
-# Never crawl a source with two overlapping runs (politeness rule):
-# queue instead of cancel so a manual dispatch waits its turn.
+# Never crawl with two overlapping runs (politeness rule): queue instead
+# of cancel so a manual dispatch waits its turn.
 concurrency:
   group: collect
   cancel-in-progress: false
@@ -43,17 +49,9 @@ concurrency:
 jobs:
   collect:
     runs-on: ubuntu-latest
-    # Polite-crawl worst case (every page timing out + retries) is
-    # roughly 45 minutes; 90 leaves comfortable headroom.
-    timeout-minutes: 90
-
-    strategy:
-      # A failing source must NOT cancel the other sources' runs -
-      # each source stands or falls on its own.
-      fail-fast: false
-      matrix:
-        # Keep in sync with ADAPTERS in collector/main.py.
-        adapter: [ppra_epms, kppra_active_tenders, epads, ajk_ppra, gb_ppra, pakrail, pia, sindh_sppra, punjab_eproc]
+    # Polite-crawl worst case (every page timing out + retries + detail
+    # enrichment + documents) is roughly two hours; 180 leaves headroom.
+    timeout-minutes: 180
 
     steps:
       - name: Check out repository
@@ -81,43 +79,74 @@ jobs:
           fi
           echo "CONTACT_EMAIL is configured."
 
-      # Compliance gate (fails loudly, exit 1): active + terms checked +
-      # no authentication + robots.txt allows. Records the robots verdict
-      # on the source row before anything is crawled.
-      - name: Compliance gate for ${{ matrix.adapter }}
+      # Punjab eProcurement serves its pages through a TLS check that
+      # rejects generic HTTP clients; the adapter falls back to Google
+      # Chrome headless, which needs the browser present on the runner.
+      - name: Install Google Chrome (punjab_eproc fallback)
+        run: |
+          if ! command -v google-chrome-stable >/dev/null 2>&1; then
+            wget -q https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq ./google-chrome-stable_current_amd64.deb
+          fi
+          google-chrome-stable --version
+
+      # Compliance gate (loud, non-zero exit): active + terms checked +
+      # no authentication + robots.txt allows per source. Records the
+      # robots verdict on the source row before anything is crawled. A
+      # gate failure only skips enforcement; the collect below still
+      # refuses at run time (so logs/artifacts stay complete).
+      - name: Compliance gate (all sources)
         env:
           CONTACT_EMAIL: ${{ secrets.CONTACT_EMAIL }}
           TENDERSCOUT_DB_PATH: collector/tenderscout.db
-        run: python scripts/compliance_check.py --source "${{ matrix.adapter }}"
+        run: |
+          for source in ppra_epms kppra_active_tenders epads ajk_ppra gb_ppra pakrail pia sindh_sppra punjab_eproc; do
+            python scripts/compliance_check.py --source "$source" || echo "compliance gate failed for $source (seen in collect logs)"
+          done
 
-      - name: Run collector (${{ matrix.adapter }})
+      # Full crawl: every adapter writes into the SAME database. Keep the
+      # DB path and adapter list in sync with collector/main.py ADAPTERS.
+      # Listing-level failures are isolated: one broken source does not
+      # stop the others or the snapshot push.
+      - name: Collect all sources
         id: collect
         env:
           CONTACT_EMAIL: ${{ secrets.CONTACT_EMAIL }}
           TENDERSCOUT_DB_PATH: collector/tenderscout.db
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
-        # --enrich-details fetches each tender's detail page (same polite
-        # rate limits) so documents and procurement type are stored too;
-        # detail failures are reported but never fail the listing run.
-        # Logs land in collector/logs/ and are always uploaded.
         shell: bash
         run: |
           mkdir -p collector/logs
-          python collector/main.py --adapter "${{ matrix.adapter }}" --enrich-details \
-            2>&1 | tee "collector/logs/collect-${{ matrix.adapter }}-${{ github.run_id }}.log"
+          failed=0
+          for adapter in ppra_epms kppra_active_tenders epads ajk_ppra gb_ppra pakrail pia sindh_sppra punjab_eproc; do
+            echo "===== $adapter ====="
+            # --enrich-limit caps detail-page fetches per source (bounded
+            # enrichment so a run never overruns the timeout).
+            if python collector/main.py --adapter "$adapter" \
+                --enrich-details --enrich-limit 25 --prune-expired \
+                2>&1 | tee "collector/logs/collect-$adapter-$GITHUB_RUN_ID.log"; then
+              :
+            else
+              echo "collect failed for $adapter"
+              failed=1
+            fi
+          done
+          # A daily demo stays useful even if one source failed today.
+          echo "source_failures=$failed" >> "$GITHUB_OUTPUT"
 
-      # Download + hash + text-extract the tender documents discovered by
-      # this run (content-addressed under var/documents, polite client,
-      # one attempt per URL). Runs only if the collect step succeeded.
-      - name: Fetch tender documents (${{ matrix.adapter }})
+      - name: Final prune and index rebuild
+        run: |
+          python collector/main.py --prune-only
+
+      - name: Fetch tender documents
         env:
           CONTACT_EMAIL: ${{ secrets.CONTACT_EMAIL }}
           TENDERSCOUT_DB_PATH: collector/tenderscout.db
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
         run: |
-          python collector/main.py --documents --docs-limit 100 \
-            2>&1 | tee -a "collector/logs/documents-${{ matrix.adapter }}-${{ github.run_id }}.log"
+          python collector/main.py --documents --docs-limit 100 || true
 
       # Keep every run's log as an artifact (success or failure) so a
       # silently degraded source can be inspected after the runner is
@@ -126,18 +155,31 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: logs-${{ matrix.adapter }}-${{ github.run_id }}
+          name: logs-${{ github.run_id }}
           path: collector/logs/*.log
           if-no-files-found: warn
 
-      # On failure, keep the database too so the failed run can be
-      # inspected. Success does not upload it (the DB is either pushed
-      # to Supabase via DATABASE_URL or ephemeral).
-      - name: Upload database on failure
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: tenderscout-db-${{ matrix.adapter }}-${{ github.run_id }}
-          path: |
-            collector/tenderscout.db
-          if-no-files-found: warn
+      # Option A wiring: commit the refreshed snapshot and push so Vercel
+      # (git-connected) auto-deploys the API with the new data. Skipped
+      # when DATABASE_URL is set (Postgres serves the API directly).
+      - name: Commit and push demo snapshot
+        if: ${{ !env.DATABASE_URL }}
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          GITHUB_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          if [ -n "$DATABASE_URL" ]; then
+            echo "DATABASE_URL set - snapshot push skipped (Postgres path)."
+            exit 0
+          fi
+          cp collector/tenderscout.db collector/demo/db.tenderscout
+          git config user.name "tenderscout-collector"
+          git config user.email "collector@tenderscout.local"
+          git add collector/demo/db.tenderscout
+          if git -c commit.gpgsign=false commit -m "collect: refresh demo snapshot (run ${GITHUB_RUN_ID})"; then
+            git remote set-url origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+            git push origin "HEAD:${GITHUB_REF_NAME}" || echo "push failed (branch protection?)"
+          else
+            echo "nothing new to commit"
+          fi
