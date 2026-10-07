@@ -68,11 +68,14 @@ Other modes: `--search QUERY`, `--rebuild-index`.
 | `epads` | EPADS federal opportunities | live |
 | `ajk_ppra` | AJ&K PPRA advertisements | live |
 | `gb_ppra` | GB PPRA procurements | live |
+| `pakrail` | Pakistan Railways tenders | live |
 
 Skipped after research (never crawled): UNDP Pakistan (`Disallow: /`),
 ADB (bot wall), NHA (robots 403), Sindh portal (central e-portal is a
 2010-2019 archive, no live listing), Punjab
-eProcure (deferred), WAPDA RSS (endpoint dead).
+eProcure (deferred until its TLS layer stops dropping automated
+clients; Punjab entities already appear via the federal EPMS), WAPDA
+RSS (endpoint dead).
 
 **Policy:** public pages only, no auth/CAPTCHA bypass, robots.txt is
 authoritative, `CONTACT_EMAIL` in the User-Agent, sources whose terms
@@ -147,7 +150,7 @@ polite listing pass → bookkeeping) once per registered source, so
 
 ```
 collector/            Python package (CLI entry: main.py / api.py)
-  adapters/           source adapters (ppra_epms, kppra, epads, ajk_ppra, gb_ppra)
+  adapters/           source adapters (ppra_epms, kppra, epads, ajk_ppra, gb_ppra, pakrail)
   fixtures/           saved HTML for offline runs
   tests/              pytest suite (offline default)
   documents.py        document download/hash/extraction
