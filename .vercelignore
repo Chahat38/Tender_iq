@@ -1,0 +1,29 @@
+# Files the Vercel upload can skip (this project only needs collector +
+# api + the bundled demo snapshot). Patterns follow .gitignore syntax.
+
+# Python/dev artifacts
+__pycache__/
+*.py[cod]
+.pytest_cache/
+node_modules/
+
+# Collector tests and offline fixtures (not needed at runtime)
+collector/tests/
+collector/fixtures/
+
+# Never ship databases / logs
+*.db
+*.db-wal
+*.db-shm
+*.sqlite3
+*.log
+
+# Docs and CI (not part of the API bundle)
+.github/
+scripts/
+supabase/
+DECISIONS.md
+LICENSE
+
+# Keep the local SQLite demo OUT (we ship the renamed snapshot instead)
+collector/tenderscout.db
