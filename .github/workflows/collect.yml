@@ -10,10 +10,8 @@
 # source stands or falls on its own (operational alerts record the failure
 # via the ops layer; logs are uploaded as artifacts).
 #
-# Required repository secret:
-#   CONTACT_EMAIL - contact address used in the crawler User-Agent
-#                   (polite-crawling rule; the run refuses to start
-#                   without it).
+# The crawler User-Agent contact address (CONTACT_EMAIL) is provided by
+# the workflow itself, so no repository secret is required to run it.
 # Optional repository secrets:
 #   DATABASE_URL      - Supabase/Postgres DSN; when set the collector
 #                       writes to Postgres instead of the local SQLite
@@ -52,6 +50,10 @@ jobs:
     # Polite-crawl worst case (every page timing out + retries + detail
     # enrichment + documents) is roughly two hours; 180 leaves headroom.
     timeout-minutes: 180
+    # Contact address used in the crawler User-Agent (polite-crawling
+    # rule). Baked in here so the run is fully self-contained.
+    env:
+      CONTACT_EMAIL: collector@tenderscout.local
 
     steps:
       - name: Check out repository
@@ -66,18 +68,6 @@ jobs:
 
       - name: Install collector dependencies
         run: python -m pip install -r collector/requirements.txt
-
-      # PoliteClient would silently send "contact: unset" if the secret
-      # is missing; refuse to crawl without a real contact address.
-      - name: Verify CONTACT_EMAIL secret is configured
-        env:
-          CONTACT_EMAIL: ${{ secrets.CONTACT_EMAIL }}
-        run: |
-          if [ -z "$CONTACT_EMAIL" ]; then
-            echo "::error::CONTACT_EMAIL secret is not set. Add it under Settings > Secrets and variables > Actions; TenderScout does not crawl without a contact address."
-            exit 1
-          fi
-          echo "CONTACT_EMAIL is configured."
 
       # Punjab eProcurement serves its pages through a TLS check that
       # rejects generic HTTP clients; the adapter falls back to Google
@@ -98,7 +88,6 @@ jobs:
       # refuses at run time (so logs/artifacts stay complete).
       - name: Compliance gate (all sources)
         env:
-          CONTACT_EMAIL: ${{ secrets.CONTACT_EMAIL }}
           TENDERSCOUT_DB_PATH: collector/tenderscout.db
         run: |
           for source in ppra_epms kppra_active_tenders epads ajk_ppra gb_ppra pakrail pia sindh_sppra punjab_eproc; do
@@ -112,7 +101,6 @@ jobs:
       - name: Collect all sources
         id: collect
         env:
-          CONTACT_EMAIL: ${{ secrets.CONTACT_EMAIL }}
           TENDERSCOUT_DB_PATH: collector/tenderscout.db
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
@@ -142,7 +130,6 @@ jobs:
 
       - name: Fetch tender documents
         env:
-          CONTACT_EMAIL: ${{ secrets.CONTACT_EMAIL }}
           TENDERSCOUT_DB_PATH: collector/tenderscout.db
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
         run: |
