@@ -69,8 +69,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal, Mapping, Union
 
-from fastapi import FastAPI, HTTPException, Path as FastAPIPath, Query
-from fastapi.responses import JSONResponse
+from fastapi import FastAPI, HTTPException, Path as FastAPIPath, Query, Request
+from fastapi.responses import JSONResponse, RedirectResponse
 from pydantic import BaseModel, Field, field_validator
 
 _SCRIPT_DIR = Path(__file__).resolve().parent
@@ -88,6 +88,13 @@ logger = logging.getLogger(__name__)
 #: Hard cap on rows per page, shared with the FTS5 search layer so both
 #: read paths behave the same way.
 _API_LIMIT_MAX = 200
+
+#: Human-facing web app. Browsers that hit the bare API root are sent
+#: here instead of being shown raw JSON (machine clients still get the
+#: JSON service descriptor). Override with ``TENDERSCOUT_WEB_URL``.
+_WEB_APP_URL = os.environ.get(
+    "TENDERSCOUT_WEB_URL", "https://tenderscout-ai.vercel.app"
+)
 
 
 class FtsUnavailableError(RuntimeError):
@@ -643,8 +650,17 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
         )
 
     @app.get("/", tags=["meta"])
-    def root() -> dict[str, Any]:
-        """Service descriptor with links to the read-only endpoints."""
+    def root(request: Request) -> Any:
+        """Service descriptor; browsers are pointed at the web app.
+
+        Machine clients (no ``text/html`` in ``Accept``) receive the JSON
+        endpoint index below. A browser opening the bare production API
+        domain is redirected to the human-facing UI instead of being
+        shown a wall of JSON.
+        """
+        accept = request.headers.get("accept", "")
+        if "text/html" in accept:
+            return RedirectResponse(_WEB_APP_URL, status_code=307)
         return {
             "name": "TenderScout AI API",
             "version": "0.1.0",

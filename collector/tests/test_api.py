@@ -77,6 +77,20 @@ class TestMeta:
         assert body["endpoints"]["search"] == "/search?q=QUERY"
         assert "/opportunities" in body["endpoints"].values()
 
+    def test_root_redirects_browsers_to_the_web_app(self, harness) -> None:
+        response = harness.client.get(
+            "/", headers={"accept": "text/html"}, follow_redirects=False
+        )
+        assert response.status_code == 307
+        assert response.headers["location"] == "https://tenderscout-ai.vercel.app"
+
+    def test_root_serves_json_to_machine_clients(self, harness) -> None:
+        response = harness.client.get(
+            "/", headers={"accept": "application/json"}
+        )
+        assert response.status_code == 200
+        assert response.json()["endpoints"]["docs"] == "/docs"
+
     def test_openapi_schema_is_served(self, harness) -> None:
         response = harness.client.get("/openapi.json")
         assert response.status_code == 200
