@@ -6,7 +6,7 @@ the collector uses, so trigger-based index sync is exercised end to
 end. No network access happens in this module.
 """
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from models import NormalizedOpportunity
@@ -260,6 +260,29 @@ class TestSearch:
         hits = index.search("ventilator")
         assert [r.external_id for r in hits] == ["123", "124"]
         assert hits[0].rank < hits[1].rank
+
+    def test_exclude_expired_drops_past_deadlines(
+        self, storage, index, source_id
+    ) -> None:
+        # Deadlines carry a +05:00 offset; the filter must compare UTC
+        # instants (not the stored local label) and keep undated rows.
+        now = datetime(2026, 10, 9, 11, 0, tzinfo=timezone.utc)  # 16:00 PKT
+        upsert(
+            storage,
+            source_id,
+            external_id="e1",
+            deadline=datetime(2026, 10, 9, 14, 15, tzinfo=timezone(timedelta(hours=5))),
+        )  # 09:15 UTC, already passed
+        upsert(
+            storage,
+            source_id,
+            external_id="e2",
+            deadline=datetime(2026, 10, 9, 18, 0, tzinfo=timezone(timedelta(hours=5))),
+        )  # 13:00 UTC, still open
+        upsert(storage, source_id, external_id="e3", deadline=None)
+        hits = index.search("medical", exclude_expired=now)
+        assert {h.external_id for h in hits} == {"e2", "e3"}
+        assert index.count("medical", exclude_expired=now) == 2
 
 
 class TestFts5Availability:

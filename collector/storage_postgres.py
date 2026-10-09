@@ -1314,7 +1314,7 @@ class PostgresStorage:
 
     def search(
         self, user_query: str, limit: int = 20, offset: int = 0, *,
-        primary_only: bool = True,
+        primary_only: bool = True, exclude_expired: datetime | None = None,
     ) -> list[SearchResult]:
         """Search stored opportunities; best matches first.
 
@@ -1324,7 +1324,8 @@ class PostgresStorage:
         an ILIKE clause per token plus a match-count rank (returned as a
         negative float so lower = more relevant, like bm25). Queries
         without word tokens return no results. ``primary_only``
-        (default) returns non-duplicate rows only.
+        (default) returns non-duplicate rows only. ``exclude_expired``
+        drops rows whose (timestamptz) deadline already passed.
         """
         tokens = self._search_tokens(user_query)
         if not tokens:
@@ -1342,6 +1343,10 @@ class PostgresStorage:
             where = where.replace(
                 " WHERE ", " WHERE o.is_primary = TRUE AND ", 1
             )
+        if exclude_expired is not None:
+            where, w_params = self._append_live_filter(
+                where, w_params, exclude_expired
+            )
         with self.conn.cursor() as cur:
             cur.execute(
                 "SELECT o.id, o.source_id, o.external_id, o.reference_number, "
@@ -1356,14 +1361,16 @@ class PostgresStorage:
         return [self._search_hit(row) for row in rows]
 
     def search_count(
-        self, user_query: str, primary_only: bool = True
+        self, user_query: str, *, primary_only: bool = True,
+        exclude_expired: datetime | None = None,
     ) -> int:
         """Return how many stored opportunities match ``user_query``.
 
         Same strict query translation as :meth:`search` (tokens ANDed,
         the last token matches as a prefix) but no ranking work. Queries
         without word tokens match nothing and return 0. ``primary_only``
-        (default) counts non-duplicate rows only.
+        (default) counts non-duplicate rows only. ``exclude_expired``
+        drops rows whose deadline already passed.
         """
         tokens = self._search_tokens(user_query)
         if not tokens:
@@ -1373,12 +1380,33 @@ class PostgresStorage:
             where = where.replace(
                 " WHERE ", " WHERE o.is_primary = TRUE AND ", 1
             )
+        if exclude_expired is not None:
+            where, w_params = self._append_live_filter(
+                where, w_params, exclude_expired
+            )
         with self.conn.cursor() as cur:
             cur.execute(
                 f"SELECT COUNT(*) AS n FROM opportunities o{where}", w_params
             )
             row = cur.fetchone()
         return int(row["n"])
+
+    @staticmethod
+    def _append_live_filter(
+        where: str, params: list, cutoff: datetime
+    ) -> tuple[str, list]:
+        """Append the ``exclude_expired`` predicate to a search query.
+
+        ``deadline`` is a ``timestamptz`` column, so the cutoff is bound
+        as a datetime and PostgreSQL compares true instants regardless of
+        the stored offset.
+        """
+        clause = "o.deadline IS NULL OR o.deadline > %s"
+        if where.strip():
+            where = f"{where} AND ({clause})"
+        else:
+            where = f" WHERE ({clause})"
+        return where, [*params, cutoff]
 
     @classmethod
     def _search_clause(cls, tokens: list[str]) -> tuple[str, list[str], str, list[str]]:

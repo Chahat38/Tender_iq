@@ -1277,7 +1277,7 @@ class Storage:
         * ``organization`` keeps rows whose organization contains the
           given text, case-insensitively (loose, like ``location``),
         * ``deadline_before`` / ``deadline_after`` keep rows whose
-          deadline (an ISO-8601 string, so string comparison works) is
+          deadline (an ISO-8601 string, normalized to UTC) is
           strictly inside the window. By default the window's end is
           open (``deadline_after`` defaults to ``NULL_DEADLINE_FILTER``,
           the sentinel meaning "no lower bound"), so tenders without a
@@ -1380,7 +1380,16 @@ class Storage:
             where.append("province IS NOT NULL AND lower(province) = ?")
             params.append(province.lower())
         if deadline_before is not None:
-            where.append("deadline IS NOT NULL AND deadline < ?")
+            # Deadlines are stored as ISO strings with a UTC offset; the
+            # cutoff is normalized to UTC on both sides (naive values are
+            # Karachi local time, mirroring prune_expired) so an instant
+            # comparison is exact regardless of the stored offset.
+            where.append(
+                "deadline IS NOT NULL AND datetime("
+                "deadline, CASE WHEN instr(deadline, '+') > 0 OR "
+                "instr(deadline, 'Z') > 0 THEN '0 hours' ELSE '-5 hours' END"
+                ") < datetime(?)"
+            )
             params.append(_db_value(deadline_before))
         if deadline_after is not NULL_DEADLINE_FILTER:
             if deadline_after is None:
@@ -1388,12 +1397,22 @@ class Storage:
                 where.append("deadline IS NOT NULL")
             else:
                 where.append(
-                    "(deadline IS NOT NULL AND deadline > ?)"
+                    "(deadline IS NOT NULL AND datetime("
+                    "deadline, CASE WHEN instr(deadline, '+') > 0 OR "
+                    "instr(deadline, 'Z') > 0 THEN '0 hours' ELSE '-5 hours' END"
+                    ") > datetime(?))"
                 )
                 params.append(_db_value(deadline_after))
         if exclude_expired is not None:
-            # Live view: undated rows stay, past deadlines go.
-            where.append("(deadline IS NULL OR deadline > ?)")
+            # Live view: undated rows stay, past deadlines go. Both sides
+            # normalized to UTC so a deadline that already passed earlier
+            # today (in its own offset) is excluded right away.
+            where.append(
+                "(deadline IS NULL OR datetime("
+                "deadline, CASE WHEN instr(deadline, '+') > 0 OR "
+                "instr(deadline, 'Z') > 0 THEN '0 hours' ELSE '-5 hours' END"
+                ") > datetime(?))"
+            )
             params.append(_db_value(exclude_expired))
         if primary_only:
             # One listed tender per notice even when the collector

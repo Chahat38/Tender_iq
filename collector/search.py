@@ -29,6 +29,7 @@ import logging
 import re
 import sqlite3
 from dataclasses import dataclass
+from datetime import datetime
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -109,21 +110,46 @@ SELECT COUNT(*) AS n
 """
 
 
-def _scoped(sql: str, primary_only: bool) -> str:
-    """Insert the primary-row clause into a search SQL statement.
+def _expired_filter_sql(column: str) -> str:
+    """SQLite WHERE fragment that keeps live (non-expired) rows only.
+
+    Deadlines are stored as ISO strings with a UTC offset; both sides
+    are normalized to UTC so a deadline that already passed earlier
+    today (in its own offset) is excluded right away. Naive values are
+    Karachi local time, mirroring ``Storage.prune_expired``.
+    """
+    return (
+        f"({column} IS NULL OR datetime("
+        f"{column}, CASE WHEN instr({column}, '+') > 0 OR "
+        f"instr({column}, 'Z') > 0 THEN '0 hours' ELSE '-5 hours' END"
+        f") > datetime(?))"
+    )
+
+
+def _scoped(sql: str, primary_only: bool, exclude_expired: datetime | None = None) -> str:
+    """Insert extra WHERE clauses into a search SQL statement.
 
     ``is_primary`` only exists on ``opportunities`` (the joined content
     table), so the unqualified reference is unambiguous; ``search_fts``
-    has no such column.
+    has no such column. ``exclude_expired`` adds the live-deadline
+    clause against ``o.deadline`` and contributes one parameter (the
+    cutoff instant) before the LIMIT/OFFSET tail.
 
     The template SQLs place the MATCH condition on their own line
     (prefix ``         WHERE search_fts MATCH ?\n``), so the clause is
     appended to the WHERE block instead of the LIMIT/OFFSET tail.
     """
-    if not primary_only:
+    extra = []
+    if primary_only:
+        extra.append("is_primary = 1")
+    if exclude_expired is not None:
+        extra.append(_expired_filter_sql("o.deadline"))
+    if not extra:
         return sql
     return sql.replace(
-        "WHERE search_fts MATCH ?", "WHERE search_fts MATCH ? AND is_primary = 1", 1
+        "WHERE search_fts MATCH ?",
+        "WHERE search_fts MATCH ? AND " + " AND ".join(extra),
+        1,
     )
 
 
@@ -252,7 +278,10 @@ class SearchIndex:
         ).fetchone()
         return int(row["n"])
 
-    def count(self, user_query: str, primary_only: bool = True) -> int:
+    def count(
+        self, user_query: str, *, primary_only: bool = True,
+        exclude_expired: datetime | None = None,
+    ) -> int:
         """Return how many stored opportunities match ``user_query``.
 
         Same strict query translation as :meth:`search` (tokens are
@@ -260,12 +289,16 @@ class SearchIndex:
         ranking or snippet work. Queries without word tokens match
         nothing and return 0. The API uses this for ``total`` counts.
         ``primary_only`` (default) counts non-duplicate rows only.
+        ``exclude_expired`` drops rows whose deadline already passed.
         """
         fts_query = _fts_query_from(user_query)
         if fts_query is None:
             return 0
+        params: list[object] = [fts_query]
+        if exclude_expired is not None:
+            params.append(exclude_expired.isoformat())
         row = self.conn.execute(
-            _scoped(_COUNT_SQL, primary_only), (fts_query,)
+            _scoped(_COUNT_SQL, primary_only, exclude_expired), params
         ).fetchone()
         return int(row["n"])
 
@@ -275,7 +308,7 @@ class SearchIndex:
 
     def search(
         self, user_query: str, limit: int = 20, offset: int = 0, *,
-        primary_only: bool = True,
+        primary_only: bool = True, exclude_expired: datetime | None = None,
     ) -> list[SearchResult]:
         """Search stored opportunities; best matches first.
 
@@ -284,7 +317,8 @@ class SearchIndex:
         tokens return no results. ``limit`` is clamped to
         [0, 200]; ``offset`` pages through results. Negative
         ``limit``/``offset`` raise ``ValueError``. ``primary_only``
-        (default) returns non-duplicate rows only.
+        (default) returns non-duplicate rows only. ``exclude_expired``
+        drops rows whose deadline already passed.
         """
         fts_query = _fts_query_from(user_query)
         if fts_query is None:
@@ -296,8 +330,12 @@ class SearchIndex:
         limit = min(limit, _RESULT_LIMIT_MAX)
         if limit == 0:
             return []
+        params: list[object] = [fts_query]
+        if exclude_expired is not None:
+            params.append(exclude_expired.isoformat())
+        params.extend((limit, offset))
         rows = self.conn.execute(
-            _scoped(_ROW_SQL, primary_only), (fts_query, limit, offset)
+            _scoped(_ROW_SQL, primary_only, exclude_expired), params
         ).fetchall()
         return [self._row_to_result(row) for row in rows]
 

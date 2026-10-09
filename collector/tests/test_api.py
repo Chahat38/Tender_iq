@@ -7,7 +7,7 @@ server process, no network.
 """
 
 import json as jsonlib
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from fastapi.testclient import TestClient
@@ -162,6 +162,49 @@ class TestOpportunityList:
             params={"deadline_before": "2030-01-01T00:00:00Z"},
         ).json()["opportunities"]
         assert [row["external_id"] for row in rows] == ["801"]
+
+    def test_exclude_expired_compares_instants_not_local_labels(self, harness) -> None:
+        # Deadlines carry a +05:00 offset; the live fetch must compare
+        # UTC instants, not the stored local label, so a deadline that
+        # already passed today is excluded immediately. Naive values are
+        # treated as Karachi local time (mirrors prune_expired). "now" is
+        # pinned so the assertions hold no matter when the suite runs.
+        now = datetime(2026, 10, 9, 11, 0, tzinfo=timezone.utc)  # 16:00 PKT
+        harness.add(
+            deadline=datetime(2026, 10, 9, 14, 15, tzinfo=timezone(timedelta(hours=5))),
+            external_id="901",
+        )  # 09:15 UTC, already passed
+        harness.add(
+            deadline=datetime(2026, 10, 9, 18, 0, tzinfo=timezone(timedelta(hours=5))),
+            external_id="902",
+        )  # 13:00 UTC, still open
+        harness.add(
+            deadline=datetime(2026, 10, 9, 9, 0), external_id="903"
+        )  # naive = 04:00 UTC Karachi, passed
+        harness.add(deadline=None, external_id="904")  # undated stays
+        rows = harness.storage.list_opportunities(
+            exclude_expired=now, primary_only=True
+        )
+        ids = [row["external_id"] for row in rows]
+        assert "901" not in ids
+        assert "902" in ids
+        assert "903" not in ids
+        assert "904" in ids
+
+    def test_search_hides_expired_keeps_undated(self, harness) -> None:
+        # The search route applies the same live default as the browse
+        # list: past-deadline rows never surface, undated rows do.
+        harness.add(
+            deadline=datetime(2019, 5, 1, tzinfo=timezone.utc), external_id="sx1"
+        )
+        harness.add(
+            deadline=datetime(2099, 1, 1, tzinfo=timezone.utc), external_id="sx2"
+        )
+        harness.add(deadline=None, external_id="sx3")
+        body = harness.client.get("/search", params={"q": "medical"}).json()
+        ids = {row["external_id"] for row in body["results"]}
+        assert "sx1" not in ids
+        assert {"sx2", "sx3"} <= ids
 
     def test_limit_and_offset_page(self, harness) -> None:
         ids = [harness.add(external_id=str(200 + i)) for i in range(5)]

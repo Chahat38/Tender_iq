@@ -985,15 +985,23 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
         Postgres-backed deployments (``DATABASE_URL``) have no FTS5;
         the route falls back to :meth:`PostgresStorage.search` with the
         same strict query contract (every word must match, the last
-        word matches as a prefix).
+        word matches as a prefix). Like the browse list, search never
+        surfaces a tender whose deadline has already passed.
         """
         primary_only = not include_duplicates
+        exclude_expired = datetime.now(timezone.utc)
         storage = _get_storage()
         if isinstance(storage, PostgresStorage):
             with data_lock:
-                total = storage.search_count(q, primary_only=primary_only)
+                total = storage.search_count(
+                    q, primary_only=primary_only, exclude_expired=exclude_expired
+                )
                 results = storage.search(
-                    q, limit=limit, offset=offset, primary_only=primary_only
+                    q,
+                    limit=limit,
+                    offset=offset,
+                    primary_only=primary_only,
+                    exclude_expired=exclude_expired,
                 )
             return SearchPage(
                 query=q,
@@ -1006,9 +1014,15 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
         try:
             with data_lock:
                 results = index.search(
-                    q, limit=limit, offset=offset, primary_only=primary_only
+                    q,
+                    limit=limit,
+                    offset=offset,
+                    primary_only=primary_only,
+                    exclude_expired=exclude_expired,
                 )
-                total = index.count(q, primary_only=primary_only)
+                total = index.count(
+                    q, primary_only=primary_only, exclude_expired=exclude_expired
+                )
         except ValueError as exc:
             # search() raises ValueError only for negative paging args,
             # which the ge=0 query constraints already prevent; kept as
