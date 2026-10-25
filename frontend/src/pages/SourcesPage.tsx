@@ -96,13 +96,54 @@ export function SourcesPage() {
                   ? `Last crawl ${formatDateTime(source.last_crawled_at)}`
                   : "Never crawled yet"}
                 {source.crawl_frequency
-                  ? ` · every ${source.crawl_frequency}h`
+                  ? ` · ${source.crawl_frequency}`
                   : ""}
               </div>
             </div>
           ))}
         </div>
       )}
+      <div className="mt-8">
+        <h3 className="text-sm font-semibold uppercase tracking-wide text-slate-400">
+          Researched but not collected
+        </h3>
+        <div className="mt-3 rounded-2xl border border-slate-800 bg-slate-900/40 p-5">
+          <div className="flex flex-wrap items-start justify-between gap-4">
+            <div className="max-w-3xl">
+              <h4 className="font-semibold text-slate-100">UNDP Pakistan</h4>
+              <p className="mt-1.5 text-sm text-slate-400">
+                UNDP publishes procurement notices on its own portal. Its{" "}
+                <code className="text-slate-300">robots.txt</code> disallows
+                automated collection, so TenderScout does not scrape it. UNDP
+                notices are not included yet; adding them requires an official
+                feed/API or a manual export/import.
+              </p>
+              <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-sm font-medium">
+                <a
+                  className="text-sky-300 transition hover:text-sky-200"
+                  href="https://www.undp.org/pakistan/procurement"
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  UNDP Pakistan procurement &rarr;
+                </a>
+                <a
+                  className="text-sky-300 transition hover:text-sky-200"
+                  href="https://procurement-notices.undp.org/"
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  Notices portal &rarr;
+                </a>
+              </div>
+            </div>
+            <span className="inline-flex items-center gap-1.5 rounded-full border border-amber-500/40 bg-amber-500/10 px-2.5 py-0.5 text-xs font-medium text-amber-300">
+              <span className="h-1.5 w-1.5 rounded-full bg-amber-400" />
+              Not collected
+            </span>
+          </div>
+        </div>
+      </div>
     </section>
   );
 }

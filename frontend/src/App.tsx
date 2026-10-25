@@ -2,10 +2,12 @@ import { useEffect, useState } from "react";
 import {
   ApiError,
   listCategories,
+  listDepartments,
   listLocations,
   listOpportunities,
   listProcurementTypes,
   listProvinces,
+  listSectors,
   listSources,
   searchOpportunities,
 } from "./api";
@@ -94,6 +96,8 @@ export default function App() {
   const [locations, setLocations] = useState<string[]>([]);
   const [categories, setCategories] = useState<string[]>([]);
   const [provinces, setProvinces] = useState<string[]>([]);
+  const [sectors, setSectors] = useState<string[]>([]);
+  const [departments, setDepartments] = useState<string[]>([]);
   const [procurementTypes, setProcurementTypes] = useState<string[]>([]);
   const [filters, setFilters] = useState<FilterValues>(EMPTY_FILTERS);
   const [searchInput, setSearchInput] = useState("");
@@ -141,6 +145,12 @@ export default function App() {
     listProvinces(controller.signal)
       .then(setProvinces)
       .catch(() => setProvinces([]));
+    listSectors(controller.signal)
+      .then(setSectors)
+      .catch(() => setSectors([]));
+    listDepartments(controller.signal)
+      .then(setDepartments)
+      .catch(() => setDepartments([]));
     listProcurementTypes(controller.signal)
       .then(setProcurementTypes)
       .catch(() => setProcurementTypes([]));
@@ -170,6 +180,8 @@ export default function App() {
             category: filters.category || undefined,
             organization: filters.organization || undefined,
             province: filters.province || undefined,
+            sector: filters.sector || undefined,
+            department: filters.department || undefined,
             procurementType: filters.procurementType || undefined,
             sort: filters.sort,
             includeDuplicates: filters.includeDuplicates || undefined,
@@ -311,6 +323,8 @@ export default function App() {
                 locations={locations}
                 categories={categories}
                 provinces={provinces}
+                sectors={sectors}
+                departments={departments}
                 procurementTypes={procurementTypes}
                 disabled={searchQuery !== ""}
                 onChange={handleFiltersChange}

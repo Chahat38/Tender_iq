@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING
 
 from http_client import PoliteClient
 from models import NormalizedOpportunity, RawListing
+from taxonomy import enrich_taxonomy
 
 if TYPE_CHECKING:
     from storage import Storage
@@ -179,6 +180,9 @@ class SourceAdapter(ABC):
             "published_at",
             "deadline",
             "location",
+            "province",
+            "sector",
+            "department",
             "category",
             "procurement_type",
             "reference_number",
@@ -293,6 +297,10 @@ class SourceAdapter(ABC):
                                 raw.external_id,
                                 exc_info=True,
                             )
+                # Fill the browse-filter fields (city/province/sector/
+                # department) from text the source already states. Values
+                # the adapter supplied are never overwritten.
+                normalized = enrich_taxonomy(normalized)
                 if storage is not None and source_id is not None:
                     status = storage.upsert_opportunity(
                         normalized, source_id, raw_content=raw.raw_html

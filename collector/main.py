@@ -52,6 +52,7 @@ from documents import DOCUMENTS_DIR, download_documents  # noqa: E402
 from ops import EXIT_COMPLIANCE, run_source  # noqa: E402
 from search import SearchIndex  # noqa: E402
 from storage import Storage, open_storage  # noqa: E402
+from taxonomy import backfill as backfill_taxonomy  # noqa: E402
 
 #: Registry of available source adapters (one entry per source).
 ADAPTERS = {
@@ -188,6 +189,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="standalone: delete expired opportunities and rebuild the "
         "search index, then exit",
     )
+    parser.add_argument(
+        "--backfill-taxonomy",
+        action="store_true",
+        help="fill city/province/sector/department on already-stored "
+        "opportunities from their existing text, then exit",
+    )
     args = parser.parse_args(argv)
     if args.search is not None and args.rebuild_index:
         parser.error("--search and --rebuild-index are mutually exclusive")
@@ -198,11 +205,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--match-user": args.match_user is not None,
         "--alerts-only": args.alerts_only,
         "--prune-only": args.prune_only,
+        "--backfill-taxonomy": args.backfill_taxonomy,
     }
     if sum(bool(value) for value in exclusive.values()) > 1:
         parser.error(
-            "--dedup-only, --documents, --analyze-only, --match-user and "
-            "--alerts-only are mutually exclusive"
+            "--dedup-only, --documents, --analyze-only, --match-user, "
+            "--alerts-only, --prune-only and --backfill-taxonomy are "
+            "mutually exclusive"
         )
     if any(exclusive.values()) and (
         args.search is not None or args.rebuild_index
@@ -331,6 +340,19 @@ def main(argv: list[str] | None = None) -> int:
                 f"examined {report['examined']}, "
                 f"candidates {report['candidate_pairs']}, "
                 f"merged {report['merged']}, queued {report['queued']}"
+            )
+            return 0
+        finally:
+            storage.close()
+
+    # ------------------ taxonomy backfill (standalone) ------------------
+    if args.backfill_taxonomy:
+        try:
+            updated = backfill_taxonomy(storage)
+            print(
+                "Taxonomy:  "
+                f"filled city/province/sector/department on {updated} "
+                "opportunity(s)."
             )
             return 0
         finally:

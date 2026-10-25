@@ -55,6 +55,8 @@ _INSERT_COLUMNS = (
     "deadline",
     "location",
     "province",
+    "sector",
+    "department",
     "category",
     "procurement_type",
     "content_hash",
@@ -435,6 +437,8 @@ class PostgresStorage:
                 "deadline": db_value(normalized.deadline),
                 "location": normalized.location,
                 "province": normalized.province,
+                "sector": normalized.sector,
+                "department": normalized.department,
                 "category": normalized.category,
                 "procurement_type": normalized.procurement_type,
                 "content_hash": new_hash,
@@ -1011,6 +1015,8 @@ class PostgresStorage:
         deadline_to: str | None = None,
         primary_only: bool = True,
         procurement_type: str | None = None,
+        sector: str | None = None,
+        department: str | None = None,
         sort: str = "newest",
     ) -> list[dict[str, Any]]:
         """Return a page of opportunities, newest first, as plain dicts.
@@ -1042,6 +1048,8 @@ class PostgresStorage:
             deadline_to=deadline_to,
             primary_only=primary_only,
             procurement_type=procurement_type,
+            sector=sector,
+            department=department,
         )
         if sort == "closing":
             order_by = (
@@ -1053,7 +1061,8 @@ class PostgresStorage:
             cur.execute(
                 f"SELECT o.id, o.source_id, o.external_id, o.reference_number, "
                 "o.title, o.organization, o.description, o.source_url, "
-                "o.published_at, o.deadline, o.location, o.category, "
+                "o.published_at, o.deadline, o.location, o.province, "
+                "o.sector, o.department, o.category, "
                 "o.procurement_type, o.content_hash, o.first_seen_at, "
                 "o.last_seen_at, o.last_verified_at "
                 f"FROM opportunities o{clause} "
@@ -1076,6 +1085,8 @@ class PostgresStorage:
         deadline_to: str | None = None,
         primary_only: bool = True,
         procurement_type: str | None = None,
+        sector: str | None = None,
+        department: str | None = None,
     ) -> int:
         """Count opportunities matching the list_opportunities filters.
 
@@ -1094,13 +1105,17 @@ class PostgresStorage:
             deadline_to=deadline_to,
             primary_only=primary_only,
             procurement_type=procurement_type,
+            sector=sector,
+            department=department,
         )
         with self.conn.cursor() as cur:
             cur.execute(
                 f"SELECT COUNT(*) AS n FROM opportunities o{clause}", params
             )
             row = cur.fetchone()
-        return int(row["n"])    @staticmethod
+        return int(row["n"])
+
+    @staticmethod
     def _opportunity_filter_params(
         source_id: int | None,
         deadline_before: Any,
@@ -1113,6 +1128,8 @@ class PostgresStorage:
         deadline_to: str | None = None,
         primary_only: bool = True,
         procurement_type: str | None = None,
+        sector: str | None = None,
+        department: str | None = None,
     ) -> tuple[str, list[Any]]:
         """Build the WHERE clause shared by the two read methods.
 
@@ -1131,8 +1148,14 @@ class PostgresStorage:
             where.append("o.source_id = %s")
             params.append(source_id)
         if location:
-            where.append("o.location ILIKE %s")
-            params.append(f"%{location}%")
+            # Mirror storage.py: scraped locations are free text and some
+            # sources leave the column empty, so match the stated text too.
+            pattern = f"%{location}%"
+            where.append(
+                "(o.location ILIKE %s OR o.organization ILIKE %s "
+                "OR o.title ILIKE %s OR o.description ILIKE %s)"
+            )
+            params.extend([pattern, pattern, pattern, pattern])
         if category:
             where.append("o.category IS NOT NULL AND lower(o.category) = %s")
             params.append(category.lower())
@@ -1148,6 +1171,14 @@ class PostgresStorage:
                 "lower(o.procurement_type) = lower(%s)"
             )
             params.append(procurement_type)
+        if sector:
+            where.append("o.sector IS NOT NULL AND lower(o.sector) = lower(%s)")
+            params.append(sector)
+        if department:
+            where.append(
+                "o.department IS NOT NULL AND lower(o.department) = lower(%s)"
+            )
+            params.append(department)
         if deadline_from:
             # Date-only inclusive lower bound on the deadline's local date.
             where.append(
@@ -1214,6 +1245,63 @@ class PostgresStorage:
             rows = cur.fetchall()
         return [str(row["province"]) for row in rows]
 
+    def list_distinct_sectors(self) -> list[str]:
+        """Every distinct non-empty sector, lowercased and sorted.
+
+        Mirrors :meth:`storage.Storage.list_distinct_sectors`.
+        """
+        with self.conn.cursor() as cur:
+            cur.execute(
+                "SELECT DISTINCT lower(sector) AS sector FROM opportunities "
+                "WHERE sector IS NOT NULL AND sector <> '' "
+                "ORDER BY sector"
+            )
+            rows = cur.fetchall()
+        return [str(row["sector"]) for row in rows]
+
+    def list_distinct_departments(self) -> list[str]:
+        """Every distinct non-empty department, lowercased and sorted.
+
+        Mirrors :meth:`storage.Storage.list_distinct_departments`.
+        """
+        with self.conn.cursor() as cur:
+            cur.execute(
+                "SELECT DISTINCT lower(department) AS department FROM opportunities "
+                "WHERE department IS NOT NULL AND department <> '' "
+                "ORDER BY department"
+            )
+            rows = cur.fetchall()
+        return [str(row["department"]) for row in rows]
+
+    def iter_taxonomy_rows(self) -> list[dict[str, Any]]:
+        """Columns needed by the taxonomy backfill (Postgres mirror)."""
+        with self.conn.cursor() as cur:
+            cur.execute(
+                "SELECT id, title, organization, description, location, province, "
+                "sector, department FROM opportunities"
+            )
+            rows = cur.fetchall()
+        return [dict(row) for row in rows]
+
+    def set_taxonomy(self, opportunity_id: int, values: dict[str, str]) -> None:
+        """Fill taxonomy columns of one opportunity (Postgres mirror).
+
+        Only the four known column names are accepted, so the SQL is never
+        built from user input.
+        """
+        allowed = ("location", "province", "sector", "department")
+        updates = [(key, values[key]) for key in allowed if values.get(key)]
+        if not updates:
+            return
+        assignments = ", ".join(f"{key} = %s" for key, _ in updates)
+        params: list[Any] = [value for _, value in updates]
+        params.append(opportunity_id)
+        with self.conn.cursor() as cur:
+            cur.execute(
+                f"UPDATE opportunities SET {assignments} WHERE id = %s", params
+            )
+        self.conn.commit()
+
     def list_distinct_procurement_types(self) -> list[str]:
         """Distinct procurement types, most common first (Postgres).
 
@@ -1265,7 +1353,8 @@ class PostgresStorage:
             cur.execute(
                 "SELECT o.id, o.source_id, o.external_id, o.reference_number, "
                 "o.title, o.organization, o.description, o.source_url, "
-                "o.published_at, o.deadline, o.location, o.category, "
+                "o.published_at, o.deadline, o.location, o.province, "
+                "o.sector, o.department, o.category, "
                 "o.procurement_type, o.content_hash, o.first_seen_at, "
                 "o.last_seen_at, o.last_verified_at "
                 "FROM opportunities o "
@@ -1289,7 +1378,8 @@ class PostgresStorage:
             cur.execute(
                 "SELECT o.id, o.source_id, o.external_id, o.reference_number, "
                 "o.title, o.organization, o.description, o.source_url, "
-                "o.published_at, o.deadline, o.location, o.category, "
+                "o.published_at, o.deadline, o.location, o.province, "
+                "o.sector, o.department, o.category, "
                 "o.procurement_type, o.content_hash, o.first_seen_at, "
                 "o.last_seen_at, o.last_verified_at "
                 "FROM opportunities o "

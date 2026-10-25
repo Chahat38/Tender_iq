@@ -124,6 +124,12 @@ jobs:
           # A daily demo stays useful even if one source failed today.
           echo "source_failures=$failed" >> "$GITHUB_OUTPUT"
 
+      - name: Backfill browse taxonomy
+        env:
+          TENDERSCOUT_DB_PATH: collector/tenderscout.db
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: python collector/main.py --backfill-taxonomy || true
+
       - name: Final prune and index rebuild
         run: |
           python collector/main.py --prune-only
