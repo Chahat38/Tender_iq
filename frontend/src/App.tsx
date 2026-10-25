@@ -190,7 +190,6 @@ export default function App() {
             sourceId: filters.sourceId ?? undefined,
             location: filters.location || undefined,
             category: filters.category || undefined,
-            organization: filters.organization || undefined,
             province: filters.province || undefined,
             sector: filters.sector || undefined,
             department: filters.department || undefined,
