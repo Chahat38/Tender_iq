@@ -23,3 +23,5 @@ node_modules/
 
 # Vercel CLI local project link
 .vercel/
+.vercel
+.env*
