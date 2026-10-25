@@ -59,6 +59,18 @@ function pageName(route: Route): PageName {
   return "home";
 }
 
+/** Footer credit listing every registered source, so new sources need no edit. */
+function sourceFootnote(sources: Source[]): string {
+  const names = sources.map((source) => source.name);
+  if (names.length === 0) {
+    return "Pakistan's public procurement portals.";
+  }
+  if (names.length === 1) {
+    return `${names[0]} pages.`;
+  }
+  return `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]} pages.`;
+}
+
 function toRow(opportunity: Opportunity): TableRow {
   return {
     id: opportunity.id,
@@ -375,8 +387,7 @@ export default function App() {
       <footer className="border-t border-slate-800/70 px-6 py-6">
         <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-3 text-xs text-slate-600">
           <p>
-            Data from public PPRA EPMS, KPPRA, EPADS, AJK PPRA, GB PPRA,
-            Pakistan Railways, PIA, SPPRA Sindh and Punjab eProcurement pages.
+            Data from public {sourceFootnote(sources)}
           </p>
           <p>TenderScoutBot/0.1 · read-only API · insights that matter.</p>
         </div>
