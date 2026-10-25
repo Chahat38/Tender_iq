@@ -2,13 +2,14 @@ import type { ChangeEvent } from "react";
 
 /**
  * All browse-mode filters in one bar: source, city, category, province,
- * procurement type and organization (text) plus a deadline date range,
- * an order switch (newest / closing soon) and a toggle that reveals
- * mirrored duplicate listings. Values the user picks are opaque strings
- * sent straight to the API; scraped facet values are never parsed by
- * the UI. The deadline range sends date-only strings; the API compares
- * the stored ISO date's first ten characters (the deadline's
- * Pakistan-local date), inclusive on both ends.
+ * department, procurement type and industry (the stored sector
+ * vocabulary) plus a deadline date range, an order switch (newest /
+ * closing soon) and a toggle that reveals mirrored duplicate listings.
+ * Values the user picks are opaque strings sent straight to the API;
+ * scraped facet values are never parsed by the UI. The deadline range
+ * sends date-only strings; the API compares the stored ISO date's first
+ * ten characters (the deadline's Pakistan-local date), inclusive on both
+ * ends.
  */
 export type SortValue = "newest" | "closing";
 
@@ -20,7 +21,6 @@ export interface FilterValues {
   sector: string;
   department: string;
   procurementType: string;
-  organization: string;
   /** ISO date (YYYY-MM-DD) or "" — inclusive lower bound on deadlines. */
   deadlineFrom: string;
   /** ISO date (YYYY-MM-DD) or "" — inclusive upper bound on deadlines. */
@@ -39,7 +39,6 @@ export const EMPTY_FILTERS: FilterValues = {
   sector: "",
   department: "",
   procurementType: "",
-  organization: "",
   deadlineFrom: "",
   deadlineTo: "",
   sort: "newest",
@@ -55,7 +54,6 @@ export function filtersAreDefault(filters: FilterValues): boolean {
     filters.sector === "" &&
     filters.department === "" &&
     filters.procurementType === "" &&
-    filters.organization === "" &&
     filters.deadlineFrom === "" &&
     filters.deadlineTo === "" &&
     filters.sort === "newest" &&
@@ -72,7 +70,6 @@ function activeFilterCount(filters: FilterValues): number {
   if (filters.sector) count += 1;
   if (filters.department) count += 1;
   if (filters.procurementType) count += 1;
-  if (filters.organization) count += 1;
   if (filters.deadlineFrom) count += 1;
   if (filters.deadlineTo) count += 1;
   if (filters.sort !== "newest") count += 1;
@@ -280,15 +277,15 @@ export function FilterBar(props: FilterBarProps) {
         </div>
 
         <div>
-          <FieldLabel>Sector</FieldLabel>
+          <FieldLabel>Industry</FieldLabel>
           <select
             value={values.sector}
             onChange={change("sector", props, (e) => e.target.value)}
             disabled={disabled}
-            aria-label="Filter by sector"
+            aria-label="Filter by industry"
             className={FIELD_CLASS}
           >
-            <option value="">All sectors</option>
+            <option value="">All industries</option>
             {sectors.map((sector) => (
               <option key={sector} value={sector}>
                 {facetLabel(sector)}
@@ -332,21 +329,6 @@ export function FilterBar(props: FilterBarProps) {
               </option>
             ))}
           </select>
-        </div>
-
-        <div>
-          <FieldLabel>Organization</FieldLabel>
-          <input
-            type="text"
-            value={values.organization}
-            onChange={change("organization", props, (e) => e.target.value)}
-            disabled={disabled}
-            maxLength={160}
-            placeholder="Contains…"
-            aria-label="Filter by organization"
-            title="Organization filter applies to browse mode only"
-            className={FIELD_CLASS}
-          />
         </div>
 
         <div className="col-span-2">

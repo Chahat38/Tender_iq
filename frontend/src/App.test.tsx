@@ -192,7 +192,6 @@ const defaultBrowseParams = {
   sourceId: undefined,
   location: undefined,
   category: undefined,
-  organization: undefined,
   province: undefined,
   sector: undefined,
   department: undefined,
@@ -265,7 +264,7 @@ describe("App browse mode", () => {
     );
   });
 
-  it("filters by sector and department in browse mode", async () => {
+  it("filters by industry and department in browse mode", async () => {
     mockedSectors.mockResolvedValue(["it & telecom"]);
     mockedDepartments.mockResolvedValue(["information technology"]);
     render(<App />);
@@ -276,7 +275,7 @@ describe("App browse mode", () => {
       await screen.findByRole("option", { name: "IT & Telecom" }),
     ).toBeInTheDocument();
 
-    fireEvent.change(screen.getByLabelText("Filter by sector"), {
+    fireEvent.change(screen.getByLabelText("Filter by industry"), {
       target: { value: "it & telecom" },
     });
     await waitFor(() =>
@@ -299,6 +298,20 @@ describe("App browse mode", () => {
         expect.anything(),
       ),
     );
+  });
+
+  it("offers an industry filter instead of an organization filter", async () => {
+    render(<App />);
+    await screen.findByText(
+      "Re-tender for Maintenance Store Items SZHL FY 2026-27",
+    );
+    expect(screen.getByLabelText("Filter by industry")).toBeInTheDocument();
+    expect(
+      screen.queryByLabelText("Filter by organization"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByPlaceholderText("Contains…"),
+    ).not.toBeInTheDocument();
   });
 
   it("filters by procurement type and sorts by closing soon", async () => {

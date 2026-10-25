@@ -104,8 +104,6 @@ export interface ListParams {
   location?: string;
   /** Exact stored category, case-insensitive (facet value). */
   category?: string;
-  /** Keep rows whose organization contains this text. */
-  organization?: string;
   /** Exact stored province, case-insensitive (facet value). */
   province?: string;
   /** Exact stored sector, case-insensitive (facet value). */
@@ -140,7 +138,6 @@ export function listOpportunities(
       source_id: params.sourceId,
       location: params.location,
       category: params.category,
-      organization: params.organization,
       province: params.province,
       sector: params.sector,
       department: params.department,
