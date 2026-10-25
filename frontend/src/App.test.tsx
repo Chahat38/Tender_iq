@@ -239,6 +239,16 @@ describe("App browse mode", () => {
     );
   });
 
+  it("credits every registered source in the footer", async () => {
+    render(<App />);
+    await screen.findByText(
+      "Re-tender for Maintenance Store Items SZHL FY 2026-27",
+    );
+    expect(
+      screen.getByText(/Data from public PPRA EPMS pages\./),
+    ).toBeInTheDocument();
+  });
+
   it("filters by city in browse mode", async () => {
     render(<App />);
     await screen.findByText(
