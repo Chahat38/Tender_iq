@@ -15,6 +15,7 @@ import type {
   OpportunityPage,
   SearchPage,
   Source,
+  SourceCoverage,
 } from "./types";
 
 /**
@@ -206,6 +207,11 @@ export function getNotifications(
 /** All registered procurement sources. */
 export function listSources(signal?: AbortSignal): Promise<Source[]> {
   return requestJson<Source[]>("/sources", signal);
+}
+
+/** Requested-source coverage, including blocked/login-only entries. */
+export function listCoverage(signal?: AbortSignal): Promise<SourceCoverage[]> {
+  return requestJson<SourceCoverage[]>("/coverage", signal);
 }
 
 /**

@@ -131,10 +131,13 @@ meant to run on a single box without infrastructure, and 429 +
 | Source | Verdict | Reason |
 | --- | --- | --- |
 | UNDP Pakistan | skip (adapter kept unregistered) | Both `procurement-notices.undp.org/robots.txt` and the `public-components.undp.org` notice widget embedded by `www.undp.org/pakistan/procurement` are `Disallow: /`. The main `www.undp.org` page only links to those hosts and publishes no static notices. The parser exists in `collector/adapters/undp.py` and is tested offline, but the compliance gate forbids fetching it. Not wired into `ADAPTERS`/`SOURCE_REGISTRY` |
+| Zong | login-only | `zong.com.pk/procurement` is informational; the vendor portal requires registration/login and no public tender listing was found |
+| Jazz | login-only | `s2pservices.jazz.com.pk` is a login portal; the Jazz sitemap has no public tender listing |
+| POF | restricted | `pof.gov.pk`, `/tenders`, `/Tenders`, `/procurement` and `/tender-notices` all return HTTP 403 through a Cloudflare challenge. Bypassing it is forbidden, so no adapter is registered |
+| NDC | not tested | Identified as National Defence Complex; no verified public procurement domain/page was found. Defence notices are published through DGDP/MoDP channels |
+| C4I | not tested | No verified public procurement domain/page was found; the organization cannot be tied to a crawlable public listing |
 | Asian Development Bank | skip | 403 bot wall (bypassing it = against terms) |
 | NHA | skip | robots.txt returns 403 (`RobotsUnavailable`) |
-| Sindh portal | skip | central `e.pprasindh.gov.pk` listing is a 2010-2019 archive (no live lists); HTTP-only, no separate live feed found |
-| Punjab eProcure | deferred | ASP.NET ViewState postback scraping not worth the fragility yet |
 | WAPDA RSS | dropped | `rssfile.xml?catid=3` returns 404 - the idea died with the endpoint |
 
 Added 2026-10-07, researched and registered as live sources: AJ&K PPRA
@@ -146,14 +149,13 @@ listing-only for now (no detail enrichment), like EPADS.
 Same day, added Pakistan Railways (`www.pakrail.gov.pk/Tenders/index.aspx`,
 robots.txt 404, server-rendered table, `?pno=N` pagination of 50, newest
 first; identifies by the `TenderDetails.aspx?ID=` number as `PRL-*`).
-Also researched but deferred: Punjab PPRA active-procurement portal
-(`eproc.punjab.gov.pk/activetenders.aspx`) - the content is a plain
-server-rendered, actively updated grid, but its TLS layer drops
-automated clients (Python `requests` and native `curl` both fail with
-SSLError / SEC_E_INVALID_TOKEN), so reliable CI collection is not
-possible today; Punjab entities remain covered through the federal
-PPRA EPMS. No public Balochistan PRA tender-listing portal was found;
-Balochistan entities publish through the federal EPMS/EPADS.
+Punjab eProcurement (`eproc.punjab.gov.pk/Admin_Tender_Search.aspx`) is
+registered too: its TLS layer drops ordinary HTTP clients, so the
+adapter retries only that host through a headless Chrome fallback after
+the PoliteClient robots gate has passed. Punjab PPRA notices are
+therefore collected directly as well as through the federal EPMS. No
+public Balochistan PRA tender-listing portal was found; Balochistan
+entities publish through the federal EPMS/EPADS.
 
 Also added PIA (`piac.com.pk/corporate/business-with-pia/tenders`,
 stock Joomla robots; single server-rendered table of current tenders,
@@ -164,6 +166,47 @@ never passes and it is not registered - its tenders are mirrored on
 EPADS anyway. Standalone portals checked during the nationwide sweep
 and found to funnel through the already-covered PPRA EPMS/EPADS:
 NLC, ANF, PNSC, Gwadar Port Authority, PSO, PAA, NBP, KPT internal.
+
+### Coverage expansion 2026-10-25
+
+The collector now registers five more public sources. Each was checked
+for robots.txt, terms/access rules and a server-rendered or official
+JSON response before implementation:
+
+| Adapter key | Source | Collection rule |
+| --- | --- | --- |
+| `ptcl` | PTCL tenders | robots allows `/Tenders`; listing dates parsed from `From ... To ...`; detail PDFs enriched |
+| `ndma` | NDMA tenders | robots disallows only `/admin` and `/api`; 34-page `?page=N` listing; evaluation reports are excluded because they are procurement results, not opportunities |
+| `dgdp` | DGDP documents | robots allow-all; all tender/auction/corrigendum document cards; no deadlines are invented when the archive card has none |
+| `world_bank` | World Bank Pakistan | official JSON API; newest 300 notices scanned; contract awards and expired deadlines excluded |
+| `paperpk` | PaperPK Tender Service | public listing and public detail fields only; no subscription or login-only content; source URLs and reference IDs preserved |
+
+The 14 requested names are exposed by `GET /coverage` even when a source
+cannot be collected. `SOURCE_CATALOG` (not `SOURCE_REGISTRY`) holds
+blocked/login-only entries because the wiring test requires every
+registered spec to pass the compliance gate. Zong and Jazz are login
+required; POF is restricted by a Cloudflare challenge; UNDP Pakistan is
+restricted by `Disallow: /`; NDC and C4I remain unverified, so they stay
+`Not Tested`. KPPRA, Federal PPRA and Punjab PPRA are already collected.
+"PPPPRA" has no matching authority and is treated as Punjab PPRA.
+
+### Live verification 2026-10-25
+
+The whole network suite (`pytest -m network`) was run after the five
+new adapters landed. Twelve of the fourteen registered sources parse
+and store live data. The two failures were both pre-existing sources
+and both diagnosed rather than waved away:
+
+| Source | Failure | Verdict |
+| --- | --- | --- |
+| KPPRA | `ChunkedEncodingError` - the server resets the connection part-way through its ~575 KB listing | **Fixed in code.** `PoliteClient` only retried `Timeout` and 429/5xx, so a single reset aborted the whole source. Transient transport errors (`ConnectionError`, `ChunkedEncodingError`, `ContentDecodingError`) now take the same exponential backoff; `SSLError` is re-raised at once because a broken certificate chain never heals. KPPRA passes live after the change. |
+| Pakistan Railways | `RobotsUnavailableError` wrapping `CERTIFICATE_VERIFY_FAILED: unable to get local issuer certificate` | **Site-side TLS defect, not a policy block and not a regression.** The leaf `CN=*.pakrail.gov.pk` is issued by `GoGetSSL RSA DV SSL CA 2`, but the handshake sends `GoGetSSL RSA DV CA`, `USERTrust RSA CA` and `AAA Certificate Services` - never the leaf's issuer. OpenSSL cannot build the chain, so the robots fetch fails and the compliance gate refuses to crawl (correct fail-loud behaviour). The site's own AIA pointer, `http://crt.sectigo.com/GoGetSSLRSADVSSLCA2.crt` (HTTP 200), serves the missing intermediate; browsers and Windows schannel repair it through the OS store, Python/certifi cannot. Verification is never disabled to work around this - re-check when Pakrail renews or reconfigures its certificate. |
+
+The demo snapshot's recorded `last_error` values are from earlier CI
+runs and are therefore stale in both directions: it still shows
+Punjab eProcurement failing with "Google Chrome is required" even
+though the adapter passes live on a machine that has Chrome, and it
+carries no rows yet for the five adapters added today.
 
 ## Quality tooling
 
@@ -180,6 +223,8 @@ source against the live sites - run with
 
 ## Frontend
 
-The React app (`frontend/`) is a separate build; this round of work
-deliberately changed no table/field names it depends on, so existing
-frontend code keeps working against the API.
+The React app (`frontend/`) is a separate build. The Sources page now
+shows source health (last status, last successful crawl, tender count,
+consecutive failures, latest error) and a requested-source coverage
+grid; the opportunity filters continue to use the existing taxonomy
+APIs. No table or field names were renamed underneath the frontend.

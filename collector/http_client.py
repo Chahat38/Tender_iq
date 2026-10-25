@@ -18,6 +18,21 @@ import requests
 
 logger = logging.getLogger(__name__)
 
+#: Transport failures worth retrying: dropped connections, resets in the
+#: middle of a chunked body and encoding hiccups are as transient as a
+#: timeout.  ``requests`` raises them straight out of the adapter, so
+#: without this list a single RST from a slow server aborts the whole
+#: source instead of backing off and trying again.
+#: :class:`requests.exceptions.SSLError` is deliberately *not* here - a
+#: broken certificate chain does not heal itself, so it is re-raised
+#: immediately (see :meth:`PoliteClient.get`).
+TRANSIENT_ERRORS: tuple[type[Exception], ...] = (
+    requests.exceptions.Timeout,
+    requests.exceptions.ConnectionError,
+    requests.exceptions.ChunkedEncodingError,
+    requests.exceptions.ContentDecodingError,
+)
+
 
 class RobotsError(RuntimeError):
     """Base class for robots.txt related refusals."""
@@ -44,8 +59,9 @@ class PoliteClient:
       (from the ``CONTACT_EMAIL`` environment variable),
     * a configurable minimum delay between requests (default 2.5 s),
     * a 20 s request timeout,
-    * exponential backoff with up to 3 attempts on HTTP 429, HTTP 5xx
-      and timeouts,
+    * exponential backoff with up to 3 attempts on HTTP 429, HTTP 5xx,
+      timeouts and dropped/reset connections (TLS failures are not
+      retried - they are configuration problems, not flakiness),
     * a robots.txt check before every ``get()``: disallowed URLs are
       refused with :class:`RobotsDisallowedError`, and URLs whose
       robots.txt cannot be fetched are refused with
@@ -191,11 +207,12 @@ class PoliteClient:
 
         Refuses the request up front if robots.txt disallows the URL or
         cannot be fetched. Retries with exponential backoff
-        (``backoff_base ** attempt`` seconds) on HTTP 429, HTTP 5xx and
-        timeouts, up to ``max_attempts`` total attempts. A final 429/5xx
-        raises ``requests.HTTPError``; a final timeout re-raises the
-        original exception. Other responses (including 4xx) are returned
-        as-is.
+        (``backoff_base ** attempt`` seconds) on HTTP 429, HTTP 5xx,
+        timeouts and transient transport errors (:data:`TRANSIENT_ERRORS`),
+        up to ``max_attempts`` total attempts. A final 429/5xx raises
+        ``requests.HTTPError``; a final timeout or transport failure
+        re-raises the original exception. TLS failures abort at once.
+        Other responses (including 4xx) are returned as-is.
         """
         self._ensure_allowed(url)
         timeout = kwargs.pop("timeout", self.timeout)
@@ -205,9 +222,17 @@ class PoliteClient:
             self._respect_delay()
             try:
                 response = self.session.get(url, timeout=timeout, **kwargs)
+            except requests.exceptions.SSLError:
+                # Incomplete/mismatched certificate chains and other TLS
+                # problems are server configuration issues; retrying only
+                # burns the backoff budget, so surface them immediately.
+                raise
             except requests.exceptions.Timeout as exc:
                 last_response, last_error = None, exc
                 reason = f"timeout after {timeout}s"
+            except TRANSIENT_ERRORS as exc:
+                last_response, last_error = None, exc
+                reason = f"{type(exc).__name__}: {exc}"
             else:
                 last_response, last_error = response, None
                 if response.status_code != 429 and response.status_code < 500:

@@ -214,6 +214,17 @@ class PPRAEpmsAdapter(SourceAdapter):
         table = soup.find("table")
         if table is None:
             return []
+        # 2026-10 layout: expandable ``tr.cb-rt-main`` rows followed by a
+        # ``tr.cb-rt-detail`` panel that carries the organization/city.
+        # The old flat table (kept in fixtures) had a dedicated
+        # "Organization Details" column, so detect the new shape first.
+        if table.select("tbody tr.cb-rt-main"):
+            listings = []
+            for tr in table.select("tbody tr.cb-rt-main"):
+                raw = self._card_row_to_raw(tr)
+                if raw is not None:
+                    listings.append(raw)
+            return listings
         headers = [
             th.get_text(" ", strip=True).lower() for th in table.select("thead th")
         ]
@@ -238,6 +249,112 @@ class PPRAEpmsAdapter(SourceAdapter):
             if raw is not None:
                 listings.append(raw)
         return listings
+
+    def _card_row_to_raw(self, tr: Tag) -> RawListing | None:
+        """Parse one 2026-10 expandable listing row.
+
+        The main row has ``data-label`` cells for Tender No, Tender
+        Details, Advertised, Closing and Actions; the following
+        ``tr.cb-rt-detail`` row has an Organization grid with the office
+        and city.  Missing pieces stay ``None`` rather than being guessed
+        from column positions.
+        """
+        tender_no_cell = tr.select_one('td[data-label="Tender No"]')
+        detail_cell = tr.select_one('td[data-label="Tender Details"]')
+        if tender_no_cell is None or detail_cell is None:
+            return None
+        id_el = tender_no_cell.select_one("strong.cb-rt-name")
+        if id_el is None:
+            id_el = tender_no_cell.find("strong")
+        external_id = (
+            _clean(id_el.get_text(" ", strip=True)) if id_el is not None else None
+        )
+        if external_id is None:
+            return None
+
+        title_el = detail_cell.find("strong")
+        if title_el is None:
+            return None
+        title = _clean(title_el.get_text(" ", strip=True))
+        if title is None:
+            return None
+        description = None
+        desc_el = detail_cell.select_one("small.text-muted.d-block")
+        if desc_el is not None:
+            description = _clean(desc_el.get_text(" ", strip=True))
+
+        category = None
+        reference = None
+        for chip in detail_cell.select("small.badge"):
+            classes = chip.get("class") or []
+            text = _clean(chip.get_text(" ", strip=True))
+            if text is None:
+                continue
+            if "text-muted" in classes:
+                if reference is None and text not in _REFERENCE_PLACEHOLDERS:
+                    reference = text
+            elif category is None:
+                category = text
+
+        advertised_cell = tr.select_one('td[data-label="Advertised"]')
+        closing_cell = tr.select_one('td[data-label="Closing"]')
+        action = tr.select_one('td[data-label="Actions"] a[href*="/tender-details/"]')
+
+        organization = None
+        office = None
+        location = None
+        detail_tr = tr.find_next_sibling("tr")
+        if detail_tr is not None and "cb-rt-detail" in (
+            detail_tr.get("class") or []
+        ):
+            for block in detail_tr.select(".cb-rt-grid > div"):
+                label_el = block.select_one(".cb-rt-dl")
+                value_el = block.select_one(".cb-rt-dv")
+                if label_el is None or value_el is None:
+                    continue
+                label = label_el.get_text(" ", strip=True).lower()
+                if label == "organization":
+                    strong_el = value_el.find("strong")
+                    if strong_el is not None:
+                        organization = _clean(
+                            strong_el.get_text(" ", strip=True)
+                        )
+                    office_el = value_el.select_one("span.d-block")
+                    if office_el is not None:
+                        office = _clean(office_el.get_text(" ", strip=True))
+                    city_el = value_el.select_one("small.text-muted")
+                    if city_el is not None:
+                        location = _clean(city_el.get_text(" ", strip=True))
+
+        url = (
+            urljoin(BASE_URL, action["href"])
+            if action is not None and action.get("href")
+            else f"{BASE_URL}{DETAIL_PATH_TEMPLATE.format(external_id=external_id)}"
+        )
+        return RawListing(
+            external_id=external_id,
+            url=url,
+            raw_html=str(tr),
+            raw_data={
+                "title": title,
+                "description": description,
+                "category": category,
+                "reference": reference,
+                "organization": organization,
+                "office": office,
+                "location": location,
+                "published_text": (
+                    advertised_cell.get_text(" ", strip=True)
+                    if advertised_cell is not None
+                    else None
+                ),
+                "deadline_text": (
+                    closing_cell.get_text(" ", strip=True)
+                    if closing_cell is not None
+                    else None
+                ),
+            },
+        )
 
     @staticmethod
     def _key_for(header: str) -> str:

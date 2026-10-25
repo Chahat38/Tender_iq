@@ -36,14 +36,19 @@ if str(_SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(_SCRIPT_DIR))
 
 from adapters.ajk_ppra import AjkPpraAdapter  # noqa: E402
+from adapters.dgdp import DgdpAdapter  # noqa: E402
 from adapters.epads import EpadsAdapter  # noqa: E402
 from adapters.gb_ppra import GbPpraAdapter  # noqa: E402
 from adapters.kppra import KppraActiveTendersAdapter  # noqa: E402
+from adapters.ndma import NdmaAdapter  # noqa: E402
 from adapters.pakrail import PakrailAdapter  # noqa: E402
+from adapters.paperpk import PaperpkAdapter  # noqa: E402
 from adapters.pia import PiaAdapter  # noqa: E402
 from adapters.ppra_epms import PPRAEpmsAdapter  # noqa: E402
+from adapters.ptcl import PtclAdapter  # noqa: E402
 from adapters.punjab_eproc import PunjabEprocAdapter  # noqa: E402
 from adapters.sindh_sppra import SindhSppraAdapter  # noqa: E402
+from adapters.world_bank import WorldBankAdapter  # noqa: E402
 from ai import run_analysis, run_matching  # noqa: E402
 from alerts import run as run_alerts  # noqa: E402
 from compliance import ComplianceError  # noqa: E402
@@ -65,6 +70,11 @@ ADAPTERS = {
     "pia": PiaAdapter,
     "sindh_sppra": SindhSppraAdapter,
     "punjab_eproc": PunjabEprocAdapter,
+    "ptcl": PtclAdapter,
+    "ndma": NdmaAdapter,
+    "dgdp": DgdpAdapter,
+    "world_bank": WorldBankAdapter,
+    "paperpk": PaperpkAdapter,
 }
 
 

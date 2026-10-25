@@ -46,6 +46,29 @@ class TestFetchListings:
         assert first.raw_data["published_text"] == "Oct 03, 2026"
 
 
+class TestCardLayout:
+    """The 2026-10 expandable table replaced the old flat org column."""
+
+    def test_card_row_and_adjacent_detail_are_merged(self, adapter) -> None:
+        rows = adapter._parse_listing_page(
+            adapter.read_fixture("ppra_card_layout.html")
+        )
+        assert len(rows) == 1
+        raw = rows[0]
+        assert raw.external_id == "TS0000016781E"
+        assert raw.url.endswith("/public/tenders/tender-details/TS0000016781E")
+        assert raw.raw_data["organization"] == (
+            "National University of Sciences and Technology (NUST)"
+        )
+        assert raw.raw_data["location"] == "Islamabad - Pakistan"
+        assert raw.raw_data["published_text"] == "Oct 25, 2026"
+        assert "Nov 17, 2026" in raw.raw_data["deadline_text"]
+
+        opportunity = adapter.normalize(raw)
+        assert opportunity.location == "Islamabad"
+        assert opportunity.deadline is not None
+
+
 class TestNormalize:
     def test_no_empty_titles(self, normalized) -> None:
         assert normalized
