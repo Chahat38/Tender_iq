@@ -60,6 +60,8 @@ create table if not exists opportunities (
     deadline timestamptz,
     location text,
     province text,
+    sector text,
+    department text,
     category text,
     procurement_type text,
     content_hash text not null,

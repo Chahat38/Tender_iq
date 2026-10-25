@@ -68,6 +68,8 @@ CREATE TABLE IF NOT EXISTS opportunities (
     location TEXT,
     province TEXT,
     category TEXT,
+    sector TEXT,
+    department TEXT,
     procurement_type TEXT,
     content_hash TEXT NOT NULL,
     is_primary INTEGER NOT NULL DEFAULT 1,
@@ -346,6 +348,8 @@ _COLUMN_MIGRATIONS: dict[str, dict[str, str]] = {
     "opportunities": {
         "source_name": "TEXT",
         "province": "TEXT",
+        "sector": "TEXT",
+        "department": "TEXT",
         "source_count": "INTEGER NOT NULL DEFAULT 1",
     },
     "opportunity_documents": {
@@ -609,10 +613,10 @@ class Storage:
                 INSERT INTO opportunities (
                     source_id, external_id, reference_number, title,
                     organization, description, source_url, source_name,
-                    published_at, deadline, location, province, category,
-                    procurement_type, content_hash, first_seen_at,
-                    last_seen_at, last_verified_at, raw_content
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    published_at, deadline, location, province, sector,
+                    department, category, procurement_type, content_hash,
+                    first_seen_at, last_seen_at, last_verified_at, raw_content
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     source_id,
@@ -627,6 +631,8 @@ class Storage:
                     _db_value(normalized.deadline),
                     normalized.location,
                     normalized.province,
+                    normalized.sector,
+                    normalized.department,
                     normalized.category,
                     normalized.procurement_type,
                     new_hash,
@@ -1163,6 +1169,8 @@ class Storage:
         deadline_to: str | None = None,
         primary_only: bool = True,
         procurement_type: str | None = None,
+        sector: str | None = None,
+        department: str | None = None,
         exclude_expired: datetime | None = None,
     ) -> int:
         """Count opportunities matching the list_opportunities filters.
@@ -1184,6 +1192,8 @@ class Storage:
             deadline_to=deadline_to,
             primary_only=primary_only,
             procurement_type=procurement_type,
+            sector=sector,
+            department=department,
             exclude_expired=exclude_expired,
         )
         row = self.conn.execute(
@@ -1249,6 +1259,8 @@ class Storage:
         deadline_to: str | None = None,
         primary_only: bool = True,
         procurement_type: str | None = None,
+        sector: str | None = None,
+        department: str | None = None,
         sort: str = "newest",
         exclude_expired: datetime | None = None,
     ) -> list[dict[str, Any]]:
@@ -1266,11 +1278,13 @@ class Storage:
         Filtering:
 
         * ``source_id`` restricts to one source,
-        * ``location`` keeps rows whose location contains the given
-          text, case-insensitively (a loose match - scraped location
-          strings are free text, not a controlled vocabulary),
-        * ``category`` / ``province`` keep rows whose stored value
-          matches case-insensitively (exact value after lower()),
+        * ``location`` keeps rows whose location, organization, title or
+          description contains the given text, case-insensitively (a
+          loose match - scraped location strings are free text, and some
+          sources state the city only in the title),
+        * ``category`` / ``province`` / ``sector`` / ``department`` keep
+          rows whose stored value matches case-insensitively (exact
+          value after lower()),
         * ``procurement_type`` keeps rows whose stored procurement type
           matches case-insensitively (use
           :meth:`list_distinct_procurement_types` for valid values),
@@ -1309,6 +1323,8 @@ class Storage:
             deadline_to=deadline_to,
             primary_only=primary_only,
             procurement_type=procurement_type,
+            sector=sector,
+            department=department,
             exclude_expired=exclude_expired,
         )
         if sort == "closing":
@@ -1337,6 +1353,8 @@ class Storage:
         deadline_to: str | None = None,
         primary_only: bool = True,
         procurement_type: str | None = None,
+        sector: str | None = None,
+        department: str | None = None,
         exclude_expired: datetime | None = None,
     ) -> tuple[str, list[Any]]:
         """Build the WHERE clause shared by list_opportunities and
@@ -1368,8 +1386,17 @@ class Storage:
             where.append("deadline IS NOT NULL AND substr(deadline, 1, 10) <= ?")
             params.append(deadline_to)
         if location:
-            where.append("location LIKE ?")
-            params.append(f"%{location}%")
+            # Scraped locations are free text and several portals leave the
+            # column empty (federal/national sources). Matching the stated
+            # text as well keeps the city filter useful: a tender that
+            # names "Karachi" in its title or organization is a Karachi
+            # tender even when the source has no dedicated location field.
+            pattern = f"%{location}%"
+            where.append(
+                "(location LIKE ? OR organization LIKE ? OR title LIKE ? "
+                "OR description LIKE ?)"
+            )
+            params.extend([pattern, pattern, pattern, pattern])
         if category:
             where.append("category IS NOT NULL AND lower(category) = ?")
             params.append(category.lower())
@@ -1425,6 +1452,18 @@ class Storage:
                 "lower(procurement_type) = lower(?)"
             )
             params.append(procurement_type)
+        if sector:
+            where.append(
+                "sector IS NOT NULL AND "
+                "lower(sector) = lower(?)"
+            )
+            params.append(sector)
+        if department:
+            where.append(
+                "department IS NOT NULL AND "
+                "lower(department) = lower(?)"
+            )
+            params.append(department)
         clause = f" WHERE {' AND '.join(where)}" if where else ""
         return clause, params
 
@@ -1471,6 +1510,62 @@ class Storage:
             "ORDER BY province"
         ).fetchall()
         return [str(row["province"]) for row in rows]
+
+    def list_distinct_sectors(self) -> list[str]:
+        """Every distinct non-empty sector, lowercased and sorted.
+
+        Adapters that know a tender's sector (IT & Telecom, Construction,
+        ...) write it; the lowercase form matches the sector filter.
+        """
+        rows = self.conn.execute(
+            "SELECT DISTINCT lower(sector) AS sector FROM opportunities "
+            "WHERE sector IS NOT NULL AND sector <> '' "
+            "ORDER BY sector"
+        ).fetchall()
+        return [str(row["sector"]) for row in rows]
+
+    def list_distinct_departments(self) -> list[str]:
+        """Every distinct non-empty department, lowercased and sorted.
+
+        Adapters that know the procuring department write it; the
+        lowercase form matches the department filter.
+        """
+        rows = self.conn.execute(
+            "SELECT DISTINCT lower(department) AS department FROM opportunities "
+            "WHERE department IS NOT NULL AND department <> '' "
+            "ORDER BY department"
+        ).fetchall()
+        return [str(row["department"]) for row in rows]
+
+    def iter_taxonomy_rows(self) -> list[dict[str, Any]]:
+        """Return the columns needed by the taxonomy backfill.
+
+        A dedicated projection (not ``SELECT *``) keeps the backfill cheap
+        on large tables and independent of unrelated schema changes.
+        """
+        rows = self.conn.execute(
+            "SELECT id, title, organization, description, location, province, "
+            "sector, department FROM opportunities"
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def set_taxonomy(self, opportunity_id: int, values: dict[str, str]) -> None:
+        """Fill taxonomy columns of one stored opportunity.
+
+        Only known column names are accepted; the backfill builds them
+        from :mod:`taxonomy`, never from user input.
+        """
+        allowed = ("location", "province", "sector", "department")
+        updates = [(key, values[key]) for key in allowed if values.get(key)]
+        if not updates:
+            return
+        assignments = ", ".join(f"{key} = ?" for key, _ in updates)
+        params: list[Any] = [value for _, value in updates]
+        params.append(opportunity_id)
+        self.conn.execute(
+            f"UPDATE opportunities SET {assignments} WHERE id = ?", params
+        )
+        self.conn.commit()
 
     def list_sources(self) -> list[dict[str, Any]]:
         """Return every registered source row as a plain dict."""
@@ -1705,4 +1800,3 @@ def open_storage(
 
         return PostgresStorage(dsn)
     return Storage(db_path or os.environ.get("TENDERSCOUT_DB_PATH", "tenderscout.db"))
-

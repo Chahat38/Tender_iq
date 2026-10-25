@@ -70,10 +70,10 @@ REQUIRED_TABLES = SHARED_TABLES + OPERATIONAL_TABLES + USER_TABLES
 OPPORTUNITY_COLUMNS = [
     "id", "source_id", "external_id", "reference_number", "title",
     "organization", "description", "source_url", "source_name",
-    "published_at", "deadline", "location", "province", "category",
-    "procurement_type", "content_hash", "is_primary", "duplicate_group_id",
-    "first_seen_at", "last_seen_at", "last_verified_at", "source_count",
-    "raw_content",
+    "published_at", "deadline", "location", "province", "sector",
+    "department", "category", "procurement_type", "content_hash",
+    "is_primary", "duplicate_group_id", "first_seen_at", "last_seen_at",
+    "last_verified_at", "source_count", "raw_content",
 ]
 
 

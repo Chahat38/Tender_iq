@@ -31,7 +31,10 @@ export interface Opportunity {
   published_at: string | null;
   deadline: string | null;
   location: string | null;
+  province: string | null;
   category: string | null;
+  sector: string | null;
+  department: string | null;
   procurement_type: string | null;
   content_hash: string;
   first_seen_at: string;

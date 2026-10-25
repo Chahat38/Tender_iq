@@ -70,6 +70,7 @@ from pathlib import Path
 from typing import Any, Literal, Mapping, Union
 
 from fastapi import FastAPI, HTTPException, Path as FastAPIPath, Query, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, RedirectResponse
 from pydantic import BaseModel, Field, field_validator
 
@@ -82,6 +83,12 @@ from ai import Analysis, analyze  # noqa: E402
 from search import SearchIndex  # noqa: E402
 from storage import NULL_DEADLINE_FILTER, Storage  # noqa: E402
 from storage_postgres import PostgresStorage  # noqa: E402
+from taxonomy import (  # noqa: E402
+    all_cities,
+    find_city,
+    normalize_province,
+    provinces_for_filter,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -139,7 +146,10 @@ class OpportunityOut(BaseModel):
     published_at: str | None = None
     deadline: str | None = None
     location: str | None = None
+    province: str | None = None
     category: str | None = None
+    sector: str | None = None
+    department: str | None = None
     procurement_type: str | None = None
     content_hash: str
     first_seen_at: str
@@ -370,6 +380,18 @@ class OpportunityFilter(BaseModel):
         description="Keep rows whose stored province equals this value "
         "case-insensitively (use /provinces for valid values).",
     )
+    sector: str | None = Field(
+        None,
+        max_length=80,
+        description="Keep rows whose stored sector equals this value "
+        "case-insensitively (use /sectors for valid values).",
+    )
+    department: str | None = Field(
+        None,
+        max_length=80,
+        description="Keep rows whose stored department equals this value "
+        "case-insensitively (use /departments for valid values).",
+    )
     deadline_from: str | None = Field(
         None,
         pattern=r"^\d{4}-\d{2}-\d{2}$",
@@ -482,6 +504,21 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
         description="Read-only JSON API over the collected tender database.",
         version="0.1.0",
         lifespan=_lifespan,
+    )
+    # The static Vercel frontend is served from a different origin than
+    # this API. The API is read-only and credential-free, so the default
+    # is an open CORS policy; deployments can narrow it with a
+    # comma-separated TENDERSCOUT_CORS_ORIGINS list.
+    _cors_origins = [
+        origin.strip()
+        for origin in os.getenv("TENDERSCOUT_CORS_ORIGINS", "*").split(",")
+        if origin.strip()
+    ] or ["*"]
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=_cors_origins,
+        allow_methods=["GET", "POST", "OPTIONS"],
+        allow_headers=["*"],
     )
     app.state.db_path = db_path
     app.state.storage = None
@@ -601,6 +638,8 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
         category: str | None = None,
         organization: str | None = None,
         province: str | None = None,
+        sector: str | None = None,
+        department: str | None = None,
         deadline_from: str | None = None,
         deadline_to: str | None = None,
         procurement_type: str | None = None,
@@ -621,6 +660,8 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
                 category=category,
                 organization=organization,
                 province=province,
+                sector=sector,
+                department=department,
                 deadline_from=deadline_from,
                 deadline_to=deadline_to,
                 primary_only=not include_duplicates,
@@ -636,6 +677,8 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
                 category=category,
                 organization=organization,
                 province=province,
+                sector=sector,
+                department=department,
                 deadline_from=deadline_from,
                 deadline_to=deadline_to,
                 primary_only=not include_duplicates,
@@ -672,6 +715,8 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
                 "categories": "/categories",
                 "provinces": "/provinces",
                 "procurement_types": "/procurement_types",
+                "sectors": "/sectors",
+                "departments": "/departments",
                 "opportunities": "/opportunities",
                 "opportunity_query": "POST /opportunities/query",
                 "opportunity": "/opportunities/{opportunity_id}",
@@ -739,6 +784,18 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
             description="Keep rows whose stored province equals this value "
             "case-insensitively (use /provinces for valid values).",
         ),
+        sector: str | None = Query(
+            None,
+            max_length=80,
+            description="Keep rows whose stored sector equals this value "
+            "case-insensitively (use /sectors for valid values).",
+        ),
+        department: str | None = Query(
+            None,
+            max_length=80,
+            description="Keep rows whose stored department equals this value "
+            "case-insensitively (use /departments for valid values).",
+        ),
         deadline_from: str | None = Query(
             None,
             pattern=r"^\d{4}-\d{2}-\d{2}$",
@@ -792,6 +849,8 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
             category=category,
             organization=organization,
             province=province,
+            sector=sector,
+            department=department,
             deadline_from=deadline_from,
             deadline_to=deadline_to,
             deadline_before=deadline_before,
@@ -812,11 +871,29 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
         )
 
     @app.get("/locations", response_model=list[str], tags=["opportunities"])
-    def list_locations() -> list[str]:
-        """Distinct location strings currently in the database (a facet
-        for the city filter; values are opaque scraped text)."""
+    def list_locations(include_all: bool = False) -> list[str]:
+        """City filter facet.
+
+        By default: distinct location strings currently in the database
+        (opaque scraped text). With ``include_all=true`` the canonical
+        list of Pakistani cities is merged in, so the dropdown is complete
+        even before every source has supplied a location.
+        """
         with data_lock:
-            return _get_storage().list_distinct_locations()
+            stored = _get_storage().list_distinct_locations()
+        if not include_all:
+            return stored
+        merged: dict[str, str] = {
+            city.lower(): city for city in all_cities()
+        }
+        for value in stored:
+            # Stored locations are free text ("karachi, pakistan"); fold
+            # each one onto the canonical city name so the dropdown does
+            # not list the same city twice under different spellings.
+            city = find_city(value)
+            if city:
+                merged.setdefault(city.lower(), city)
+        return sorted(merged.values(), key=str.lower)
 
     @app.get("/categories", response_model=list[str], tags=["opportunities"])
     def list_categories() -> list[str]:
@@ -826,11 +903,44 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
             return _get_storage().list_distinct_categories()
 
     @app.get("/provinces", response_model=list[str], tags=["opportunities"])
-    def list_provinces() -> list[str]:
-        """Distinct stored provinces (facet for the province filter;
-        adapter-written, lowercase)."""
+    def list_provinces(include_all: bool = False) -> list[str]:
+        """Province filter facet.
+
+        By default: distinct stored provinces, lowercase. With
+        ``include_all=true`` every Pakistani province is always listed
+        (canonical spelling) and stored aliases are folded onto the
+        canonical name, so the filter is usable on a new database too.
+        """
         with data_lock:
-            return _get_storage().list_distinct_provinces()
+            stored = _get_storage().list_distinct_provinces()
+        if not include_all:
+            return stored
+        canonical = provinces_for_filter()
+        merged: dict[str, str] = {
+            name.lower(): name for name in canonical
+        }
+        extras: set[str] = set()
+        for value in stored:
+            canonical_name = normalize_province(value)
+            if canonical_name:
+                merged.setdefault(canonical_name.lower(), canonical_name)
+            else:
+                text = (value or "").strip()
+                if text:
+                    extras.add(text.title())
+        return canonical + sorted(extras, key=str.lower)
+
+    @app.get("/sectors", response_model=list[str], tags=["opportunities"])
+    def list_sectors() -> list[str]:
+        """Distinct stored sectors (facet for the sector filter)."""
+        with data_lock:
+            return _get_storage().list_distinct_sectors()
+
+    @app.get("/departments", response_model=list[str], tags=["opportunities"])
+    def list_departments() -> list[str]:
+        """Distinct stored departments (facet for the department filter)."""
+        with data_lock:
+            return _get_storage().list_distinct_departments()
 
     @app.get("/procurement_types", response_model=list[str], tags=["opportunities"])
     def list_procurement_types() -> list[str]:
@@ -864,6 +974,8 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
             category=body.category,
             organization=body.organization,
             province=body.province,
+            sector=body.sector,
+            department=body.department,
             deadline_from=body.deadline_from,
             deadline_to=body.deadline_to,
             deadline_before=body.deadline_before,

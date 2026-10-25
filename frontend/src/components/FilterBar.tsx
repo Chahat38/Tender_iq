@@ -17,6 +17,8 @@ export interface FilterValues {
   location: string;
   category: string;
   province: string;
+  sector: string;
+  department: string;
   procurementType: string;
   organization: string;
   /** ISO date (YYYY-MM-DD) or "" — inclusive lower bound on deadlines. */
@@ -34,6 +36,8 @@ export const EMPTY_FILTERS: FilterValues = {
   location: "",
   category: "",
   province: "",
+  sector: "",
+  department: "",
   procurementType: "",
   organization: "",
   deadlineFrom: "",
@@ -48,6 +52,8 @@ export function filtersAreDefault(filters: FilterValues): boolean {
     filters.location === "" &&
     filters.category === "" &&
     filters.province === "" &&
+    filters.sector === "" &&
+    filters.department === "" &&
     filters.procurementType === "" &&
     filters.organization === "" &&
     filters.deadlineFrom === "" &&
@@ -63,6 +69,8 @@ function activeFilterCount(filters: FilterValues): number {
   if (filters.location) count += 1;
   if (filters.category) count += 1;
   if (filters.province) count += 1;
+  if (filters.sector) count += 1;
+  if (filters.department) count += 1;
   if (filters.procurementType) count += 1;
   if (filters.organization) count += 1;
   if (filters.deadlineFrom) count += 1;
@@ -78,6 +86,8 @@ interface FilterBarProps {
   locations: string[];
   categories: string[];
   provinces: string[];
+  sectors: string[];
+  departments: string[];
   procurementTypes: string[];
   disabled: boolean;
   onChange: (values: FilterValues) => void;
@@ -85,6 +95,42 @@ interface FilterBarProps {
 
 const FIELD_CLASS =
   "w-full rounded-lg border border-slate-700/80 bg-slate-900 px-3 py-2 text-sm text-slate-200 transition focus:border-sky-500 focus:outline-none disabled:cursor-not-allowed disabled:opacity-40";
+
+/**
+ * Display form for facet values. The API returns controlled-vocabulary
+ * facets lowercased for case-insensitive matching ("it & telecom",
+ * "khyber pakhtunkhwa"); the option value stays exactly as sent while the
+ * label is humanized. Acronyms keep their conventional casing.
+ */
+const FACET_ACRONYMS: Record<string, string> = {
+  it: "IT",
+  ict: "ICT",
+  hr: "HR",
+  undp: "UNDP",
+  wasa: "WASA",
+  nadra: "NADRA",
+  pta: "PTA",
+  gis: "GIS",
+  erp: "ERP",
+  cctv: "CCTV",
+  scada: "SCADA",
+  "p&d": "P&D",
+  "c&w": "C&W",
+};
+
+function facetLabel(value: string): string {
+  return value
+    .split(" ")
+    .map((word) => {
+      const bare = word.replace(/[^a-z0-9&]/gi, "").toLowerCase();
+      const acronym = FACET_ACRONYMS[bare];
+      if (acronym) {
+        return word.length === bare.length ? acronym : word;
+      }
+      return word.charAt(0).toUpperCase() + word.slice(1);
+    })
+    .join(" ");
+}
 
 function FieldLabel({ children }: { children: string }) {
   return (
@@ -111,6 +157,8 @@ export function FilterBar(props: FilterBarProps) {
     locations,
     categories,
     provinces,
+    sectors,
+    departments,
     procurementTypes,
     disabled,
   } = props;
@@ -225,7 +273,43 @@ export function FilterBar(props: FilterBarProps) {
             <option value="">All provinces</option>
             {provinces.map((province) => (
               <option key={province} value={province}>
-                {province}
+                {facetLabel(province)}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div>
+          <FieldLabel>Sector</FieldLabel>
+          <select
+            value={values.sector}
+            onChange={change("sector", props, (e) => e.target.value)}
+            disabled={disabled}
+            aria-label="Filter by sector"
+            className={FIELD_CLASS}
+          >
+            <option value="">All sectors</option>
+            {sectors.map((sector) => (
+              <option key={sector} value={sector}>
+                {facetLabel(sector)}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div>
+          <FieldLabel>Department</FieldLabel>
+          <select
+            value={values.department}
+            onChange={change("department", props, (e) => e.target.value)}
+            disabled={disabled}
+            aria-label="Filter by department"
+            className={FIELD_CLASS}
+          >
+            <option value="">All departments</option>
+            {departments.map((department) => (
+              <option key={department} value={department}>
+                {facetLabel(department)}
               </option>
             ))}
           </select>

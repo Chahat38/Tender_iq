@@ -31,6 +31,8 @@ TRACKED_FIELDS = (
     "deadline",
     "location",
     "province",
+    "sector",
+    "department",
     "category",
     "procurement_type",
     "reference_number",

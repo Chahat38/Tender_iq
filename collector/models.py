@@ -61,6 +61,8 @@ class NormalizedOpportunity(BaseModel):
     location: str | None = None
     province: str | None = None
     category: str | None = None
+    sector: str | None = None
+    department: str | None = None
     procurement_type: str | None = None
     reference_number: str | None = None
     document_urls: list[str] = Field(default_factory=list)

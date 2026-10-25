@@ -52,6 +52,8 @@ def three_rows(storage, source_id) -> None:
         _opp(
             category="Health",
             province="Punjab",
+            sector="IT & Telecom",
+            department="Information Technology",
             organization="Punjab Information Technology Board",
             external_id="101",
         ),
@@ -61,6 +63,8 @@ def three_rows(storage, source_id) -> None:
         _opp(
             category="Education",
             province="Sindh",
+            sector="Water & Sanitation",
+            department="Water & Sanitation",
             organization="Karachi Water and Sewerage Board",
             external_id="102",
         ),
@@ -70,7 +74,10 @@ def three_rows(storage, source_id) -> None:
         _opp(
             category=None,
             province="Punjab",
+            sector="Construction & Works",
+            department="Works & Services",
             organization="Executive Engineer Highway Division",
+            description="Rehabilitation of the highway and drainage network",
             external_id="103",
         ),
         source_id,
@@ -97,6 +104,43 @@ class TestStorageFilters:
         rows = storage.list_opportunities(province="punjab")
         assert {row["external_id"] for row in rows} == {"101", "103"}
         assert storage.count_opportunities(province="Sindh") == 1
+
+    def test_sector_exact_case_insensitive(
+        self, storage, source_id, three_rows
+    ) -> None:
+        rows = storage.list_opportunities(sector="it & telecom")
+        assert [row["external_id"] for row in rows] == ["101"]
+        assert storage.count_opportunities(sector="IT & TELECOM") == 1
+
+    def test_department_exact_case_insensitive(
+        self, storage, source_id, three_rows
+    ) -> None:
+        rows = storage.list_opportunities(department="information technology")
+        assert [row["external_id"] for row in rows] == ["101"]
+        assert storage.count_opportunities(department="Works & Services") == 1
+
+    def test_location_matches_title_organization_and_description(
+        self, storage, source_id, three_rows
+    ) -> None:
+        # The stored location is Lahore for every row, so these matches can
+        # only come from the broadened location filter.
+        assert [
+            row["external_id"]
+            for row in storage.list_opportunities(location="information technology")
+        ] == ["101"]
+        assert [
+            row["external_id"]
+            for row in storage.list_opportunities(location="highway")
+        ] == ["103"]
+        assert [
+            row["external_id"]
+            for row in storage.list_opportunities(location="drainage")
+        ] == ["103"]
+        assert {
+            row["external_id"]
+            for row in storage.list_opportunities(location="laptops")
+        } == {"101", "102", "103"}
+        assert storage.list_opportunities(location="no-such-token") == []
 
     def test_organization_substring_case_insensitive(
         self, storage, source_id, three_rows
@@ -130,6 +174,20 @@ class TestStorageFilters:
     ) -> None:
         assert storage.list_distinct_provinces() == ["punjab", "sindh"]
 
+    def test_distinct_sector_and_department_facets(
+        self, storage, source_id, three_rows
+    ) -> None:
+        assert storage.list_distinct_sectors() == [
+            "construction & works",
+            "it & telecom",
+            "water & sanitation",
+        ]
+        assert storage.list_distinct_departments() == [
+            "information technology",
+            "water & sanitation",
+            "works & services",
+        ]
+
     def test_facets_ignore_null_and_empty(
         self, storage, source_id
     ) -> None:
@@ -157,6 +215,8 @@ class TestApiFilterEndpoints:
             _opp(
                 category="Health",
                 province="Punjab",
+                sector="IT & Telecom",
+                department="Information Technology",
                 organization="Punjab Information Technology Board",
                 external_id="201",
             ),
@@ -166,6 +226,8 @@ class TestApiFilterEndpoints:
             _opp(
                 category="Education",
                 province="Sindh",
+                sector="Water & Sanitation",
+                department="Water & Sanitation",
                 organization="Karachi Water and Sewerage Board",
                 external_id="202",
             ),
@@ -198,11 +260,48 @@ class TestApiFilterEndpoints:
         ).json()
         assert [row["external_id"] for row in body["opportunities"]] == ["201"]
 
+    def test_get_sector_and_department(self, client) -> None:
+        body = client.get(
+            "/opportunities",
+            params={"sector": "it & telecom", "department": "information technology"},
+        ).json()
+        assert [row["external_id"] for row in body["opportunities"]] == ["201"]
+        assert body["total"] == 1
+
+    def test_post_query_accepts_sector_and_department(self, client) -> None:
+        body = client.post(
+            "/opportunities/query",
+            json={"sector": "Water & Sanitation"},
+        ).json()
+        assert [row["external_id"] for row in body["opportunities"]] == ["202"]
+
     def test_categories_facet_endpoint(self, client) -> None:
         assert client.get("/categories").json() == ["education", "health"]
 
     def test_provinces_facet_endpoint(self, client) -> None:
         assert client.get("/provinces").json() == ["punjab", "sindh"]
+
+    def test_sector_and_department_facet_endpoints(self, client) -> None:
+        assert client.get("/sectors").json() == [
+            "it & telecom",
+            "water & sanitation",
+        ]
+        assert client.get("/departments").json() == [
+            "information technology",
+            "water & sanitation",
+        ]
+
+    def test_include_all_facets_complete_the_dropdowns(self, client) -> None:
+        provinces = client.get("/provinces?include_all=true").json()
+        assert provinces[:3] == ["Punjab", "Sindh", "Khyber Pakhtunkhwa"]
+        assert "Azad Jammu & Kashmir" in provinces
+
+        cities = client.get("/locations?include_all=true").json()
+        assert "Karachi" in cities
+        assert "Lahore" in cities
+        assert len(cities) > 300
+        # Stored free text is folded onto the canonical name, not repeated.
+        assert cities.count("Lahore") == 1
 
     def test_categories_endpoint_is_listed_in_root(self, client) -> None:
         endpoints = client.get("/").json()["endpoints"]

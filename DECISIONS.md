@@ -130,7 +130,7 @@ meant to run on a single box without infrastructure, and 429 +
 
 | Source | Verdict | Reason |
 | --- | --- | --- |
-| UNDP Pakistan | skip | `robots.txt` `Disallow: /` |
+| UNDP Pakistan | skip (adapter kept unregistered) | Both `procurement-notices.undp.org/robots.txt` and the `public-components.undp.org` notice widget embedded by `www.undp.org/pakistan/procurement` are `Disallow: /`. The main `www.undp.org` page only links to those hosts and publishes no static notices. The parser exists in `collector/adapters/undp.py` and is tested offline, but the compliance gate forbids fetching it. Not wired into `ADAPTERS`/`SOURCE_REGISTRY` |
 | Asian Development Bank | skip | 403 bot wall (bypassing it = against terms) |
 | NHA | skip | robots.txt returns 403 (`RobotsUnavailable`) |
 | Sindh portal | skip | central `e.pprasindh.gov.pk` listing is a 2010-2019 archive (no live lists); HTTP-only, no separate live feed found |

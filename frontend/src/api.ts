@@ -107,6 +107,10 @@ export interface ListParams {
   organization?: string;
   /** Exact stored province, case-insensitive (facet value). */
   province?: string;
+  /** Exact stored sector, case-insensitive (facet value). */
+  sector?: string;
+  /** Exact stored department, case-insensitive (facet value). */
+  department?: string;
   /** Exact stored procurement type, case-insensitive (facet value). */
   procurementType?: string;
   /** newest = insertion order; closing = soonest deadline first. */
@@ -137,6 +141,8 @@ export function listOpportunities(
       category: params.category,
       organization: params.organization,
       province: params.province,
+      sector: params.sector,
+      department: params.department,
       procurement_type: params.procurementType,
       sort: params.sort,
       include_duplicates: params.includeDuplicates,
@@ -202,9 +208,13 @@ export function listSources(signal?: AbortSignal): Promise<Source[]> {
   return requestJson<Source[]>("/sources", signal);
 }
 
-/** Distinct location strings currently in the database (city filter facet). */
+/**
+ * City filter facet: distinct stored locations merged with the canonical
+ * Pakistani city list, so every city is selectable even before a source
+ * has supplied a location string.
+ */
 export function listLocations(signal?: AbortSignal): Promise<string[]> {
-  return requestJson<string[]>("/locations", signal);
+  return requestJson<string[]>("/locations?include_all=true", signal);
 }
 
 /** Distinct stored categories (category filter facet). */
@@ -212,9 +222,22 @@ export function listCategories(signal?: AbortSignal): Promise<string[]> {
   return requestJson<string[]>("/categories", signal);
 }
 
-/** Distinct stored provinces (province filter facet). */
+/**
+ * Province filter facet: the seven Pakistani provinces (canonical
+ * spelling) plus any stored values, always complete.
+ */
 export function listProvinces(signal?: AbortSignal): Promise<string[]> {
-  return requestJson<string[]>("/provinces", signal);
+  return requestJson<string[]>("/provinces?include_all=true", signal);
+}
+
+/** Distinct stored sectors (sector filter facet). */
+export function listSectors(signal?: AbortSignal): Promise<string[]> {
+  return requestJson<string[]>("/sectors", signal);
+}
+
+/** Distinct stored departments (department filter facet). */
+export function listDepartments(signal?: AbortSignal): Promise<string[]> {
+  return requestJson<string[]>("/departments", signal);
 }
 
 /** Distinct stored procurement types (procurement_type filter facet). */
