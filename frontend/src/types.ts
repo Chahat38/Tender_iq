@@ -16,6 +16,27 @@ export interface Source {
   requires_authentication: number | null;
   crawl_frequency: string | null;
   last_crawled_at: string | null;
+  last_success_at: string | null;
+  base_url: string | null;
+  last_status: string | null;
+  consecutive_failures: number | null;
+  opportunity_count: number;
+  last_error: string | null;
+}
+
+/** One requested source in the coverage matrix (CoverageOut). */
+export interface SourceCoverage {
+  key: string;
+  requested_name: string;
+  source_name: string | null;
+  status: string;
+  url: string | null;
+  note: string;
+  source_id: number | null;
+  last_crawled_at: string | null;
+  last_success_at: string | null;
+  opportunity_count: number | null;
+  last_error: string | null;
 }
 
 /** One opportunity, source-recorded fields (OpportunityOut). */

@@ -172,7 +172,229 @@ SOURCE_REGISTRY: dict[str, SourceSpec] = {
         requires_authentication=False,
         crawl_frequency="every 6h",
     ),
+    "ptcl": SourceSpec(
+        key="ptcl",
+        source_name="PTCL Tenders",
+        base_url="https://ptcl.com.pk",
+        adapter_type="PtclAdapter",
+        active=True,
+        # Research 2026-10-25: public /Tenders accordion, no login or
+        # CAPTCHA; robots.txt is allow-all for the tenders path; detail
+        # pages expose the direct PDF. No anti-automation terms found.
+        terms_checked=True,
+        requires_authentication=False,
+        crawl_frequency="daily",
+    ),
+    "ndma": SourceSpec(
+        key="ndma",
+        source_name="NDMA Tenders",
+        base_url="https://ndma.gov.pk",
+        adapter_type="NdmaAdapter",
+        active=True,
+        # Research 2026-10-25: public /tenders cards and ?page=N pager;
+        # robots.txt allows everything except /admin and /api; no login
+        # or CAPTCHA; links are direct PDFs. No anti-automation terms
+        # found.
+        terms_checked=True,
+        requires_authentication=False,
+        crawl_frequency="daily",
+    ),
+    "dgdp": SourceSpec(
+        key="dgdp",
+        source_name="DGDP Tenders",
+        base_url="https://dgdp.gov.pk",
+        adapter_type="DgdpAdapter",
+        active=True,
+        # Research 2026-10-25: public downloads.php document archive,
+        # server-rendered; robots.txt 404 -> no restrictions declared;
+        # no login or CAPTCHA. The cards carry no deadlines, so the
+        # adapter leaves deadline=None rather than guessing.
+        terms_checked=True,
+        requires_authentication=False,
+        crawl_frequency="daily",
+    ),
+    "world_bank": SourceSpec(
+        key="world_bank",
+        source_name="World Bank Procurement Notices",
+        base_url="https://projects.worldbank.org",
+        adapter_type="WorldBankAdapter",
+        active=True,
+        # Research 2026-10-25: official public JSON API at
+        # search.worldbank.org/api/v2/procnotices; search host robots.txt
+        # is 404 (no declared rules), projects host is allow-all outside
+        # internal paths; no login or key. Contract awards are excluded.
+        terms_checked=True,
+        requires_authentication=False,
+        crawl_frequency="daily",
+    ),
+    "paperpk": SourceSpec(
+        key="paperpk",
+        source_name="PaperPK Tender Service",
+        base_url="https://tenderservice.pk",
+        adapter_type="PaperpkAdapter",
+        active=True,
+        # Research 2026-10-25: public home listing and public detail
+        # fields; robots.txt has no wildcard disallow on either
+        # tenderservice.pk or paperpk.com; no login is needed for the
+        # collected fields. This is an aggregator, not an official
+        # procuring entity; subscription-only content is not fetched.
+        terms_checked=True,
+        requires_authentication=False,
+        crawl_frequency="daily",
+    ),
 }
+
+
+@dataclass(frozen=True)
+class CoverageSpec:
+    """One requested source in the public coverage matrix.
+
+    ``source_name`` is set for entries that map to a registered
+    (collectable) source.  Blocked/login-only entries have no source row
+    and therefore never appear as a zero-result source filter.
+    """
+
+    key: str
+    requested_name: str
+    source_name: str | None
+    status: str
+    url: str | None
+    note: str
+
+
+#: Status vocabulary used by ``/coverage`` and the Sources page.
+COVERAGE_STATUSES = ("Active", "Login Required", "Restricted", "Failed", "Not Tested")
+
+#: The user's requested list, kept separate from SOURCE_REGISTRY because
+#: blocked/login-only entries must not be scheduled or pass the compliance
+#: gate.  ``Active`` entries point at the actual registered source row.
+SOURCE_CATALOG: tuple[CoverageSpec, ...] = (
+    CoverageSpec(
+        key="zong",
+        requested_name="Zong",
+        source_name=None,
+        status="Login Required",
+        url="https://www.zong.com.pk/procurement",
+        note="Public page is informational; Zong uses a vendor registration "
+        "portal and no public tender listing was found.",
+    ),
+    CoverageSpec(
+        key="jazz",
+        requested_name="Jazz",
+        source_name=None,
+        status="Login Required",
+        url="https://s2pservices.jazz.com.pk/",
+        note="Jazz uses a vendor portal (login); no public tender listing was "
+        "found on jazz.com.pk.",
+    ),
+    CoverageSpec(
+        key="ptcl",
+        requested_name="PTCL",
+        source_name="PTCL Tenders",
+        status="Active",
+        url="https://ptcl.com.pk/Tenders",
+        note="Public tender notices with direct PDFs.",
+    ),
+    CoverageSpec(
+        key="dgdp",
+        requested_name="DGDP",
+        source_name="DGDP Tenders",
+        status="Active",
+        url="https://dgdp.gov.pk/downloads.php",
+        note="Public tender/auction/corrigendum document archive; cards do not "
+        "state deadlines.",
+    ),
+    CoverageSpec(
+        key="ndc",
+        requested_name="NDC",
+        source_name=None,
+        status="Not Tested",
+        url=None,
+        note="Identified as National Defence Complex (NDC). No verified public "
+        "procurement domain/page was found; defence notices appear through "
+        "DGDP/MoDP channels instead.",
+    ),
+    CoverageSpec(
+        key="c4i",
+        requested_name="C4I",
+        source_name=None,
+        status="Not Tested",
+        url=None,
+        note="C4I directorate/organization could not be tied to a verified "
+        "public procurement domain. No crawlable page was found.",
+    ),
+    CoverageSpec(
+        key="pof",
+        requested_name="POF",
+        source_name=None,
+        status="Restricted",
+        url="https://pof.gov.pk/",
+        note="Every public path returns a Cloudflare 403 challenge. "
+        "TenderScout does not bypass bot challenges, so no adapter is "
+        "registered.",
+    ),
+    CoverageSpec(
+        key="ndma",
+        requested_name="NDMA",
+        source_name="NDMA Tenders",
+        status="Active",
+        url="https://ndma.gov.pk/tenders",
+        note="Public tender cards and direct PDFs; evaluation reports are "
+        "skipped.",
+    ),
+    CoverageSpec(
+        key="paperpk",
+        requested_name="PAPERPK",
+        source_name="PaperPK Tender Service",
+        status="Active",
+        url="https://tenderservice.pk/",
+        note="Public aggregator listing/detail fields only; subscription-only "
+        "content is not fetched. Not an official procuring entity.",
+    ),
+    CoverageSpec(
+        key="world_bank",
+        requested_name="World Bank",
+        source_name="World Bank Procurement Notices",
+        status="Active",
+        url="https://projects.worldbank.org/en/projects-operations/procurement",
+        note="Official public JSON API; contract awards and expired notices "
+        "are excluded.",
+    ),
+    CoverageSpec(
+        key="undp",
+        requested_name="UNDP Pakistan",
+        source_name=None,
+        status="Restricted",
+        url="https://www.undp.org/pakistan/procurement",
+        note="Both UNDP notice hosts disallow all user agents (robots "
+        "Disallow: /). Manual CSV/HTML import is the approved route.",
+    ),
+    CoverageSpec(
+        key="kppra",
+        requested_name="KPPRA",
+        source_name="KPPRA Active Tenders",
+        status="Active",
+        url="http://kppra.gov.pk/kppra/activetenders.php",
+        note="Already integrated.",
+    ),
+    CoverageSpec(
+        key="ppppra",
+        requested_name="PPPPRA",
+        source_name="Punjab eProcurement",
+        status="Active",
+        url="https://eproc.punjab.gov.pk",
+        note="The requested 'PPPPRA' appears to mean Punjab PPRA; its public "
+        "notices are collected through Punjab eProcurement.",
+    ),
+    CoverageSpec(
+        key="federal_ppra",
+        requested_name="Federal PPRA",
+        source_name="PPRA EPMS",
+        status="Active",
+        url="https://epms.ppra.gov.pk",
+        note="Already integrated through the PPRA EPMS public pages.",
+    ),
+)
 
 
 def spec_for(adapter_key: str) -> SourceSpec | None:

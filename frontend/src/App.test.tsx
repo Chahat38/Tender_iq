@@ -26,6 +26,7 @@ vi.mock("./api", () => ({
   },
   listOpportunities: vi.fn(),
   listSources: vi.fn(),
+  listCoverage: vi.fn(),
   listLocations: vi.fn(),
   listCategories: vi.fn(),
   listProvinces: vi.fn(),
@@ -44,6 +45,7 @@ vi.mock("./api", () => ({
 import * as api from "./api";
 const mockedList = vi.mocked(api.listOpportunities);
 const mockedListSources = vi.mocked(api.listSources);
+const mockedListCoverage = vi.mocked(api.listCoverage);
 const mockedLocations = vi.mocked(api.listLocations);
 const mockedCategories = vi.mocked(api.listCategories);
 const mockedProvinces = vi.mocked(api.listProvinces);
@@ -114,6 +116,12 @@ const sources: Source[] = [
     requires_authentication: 0,
     crawl_frequency: null,
     last_crawled_at: null,
+    last_success_at: null,
+    base_url: "https://epms.ppra.gov.pk",
+    last_status: "ok",
+    consecutive_failures: 0,
+    opportunity_count: 2,
+    last_error: null,
   },
 ];
 
@@ -200,6 +208,7 @@ beforeEach(() => {
   vi.resetAllMocks();
   mockedList.mockResolvedValue(page);
   mockedListSources.mockResolvedValue(sources);
+  mockedListCoverage.mockResolvedValue([]);
   mockedLocations.mockResolvedValue(["karachi, pakistan", "lahore, pakistan"]);
   mockedCategories.mockResolvedValue([]);
   mockedProvinces.mockResolvedValue([]);

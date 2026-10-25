@@ -1,0 +1,64 @@
+{
+  "rows": 4,
+  "os": 0,
+  "page": 1,
+  "total": 4,
+  "procnotices": [
+    {
+      "id": "OP00476983",
+      "notice_type": "Invitation for Bids",
+      "noticedate": "22-Oct-2026",
+      "notice_status": "Published",
+      "project_ctry_code": "PK",
+      "project_ctry_name": "Pakistan",
+      "project_id": "P176594",
+      "project_name": "Getting Results: Access and Delivery of Quality Education Services in Punjab Project",
+      "agency_name": "School Education Department, Govt of Punjab",
+      "bid_reference_no": "PK-SED PUNJAB-573936-CS-CQS",
+      "bid_description": "Development of Scanning and Data Entry Application",
+      "noticetitle": "Development of Scanning and Data Entry Application",
+      "submission_deadline_date": "2030-11-05T00:00:00Z",
+      "procurement_group_desc": "Consultant Services",
+      "notice_text": "<p>Request for proposals for scanning and data entry.</p><a href=\"https://projects.worldbank.org/en/projects-operations/procurement-detail/OP00476983\">Details</a>"
+    },
+    {
+      "id": "OP00476984",
+      "notice_type": "Request for Expression of Interest",
+      "noticedate": "16-Oct-2026",
+      "notice_status": "Published",
+      "project_ctry_code": "PK",
+      "project_ctry_name": "Pakistan",
+      "project_id": "P176595",
+      "project_name": "Punjab Health and Population Survey",
+      "agency_name": "Health Department, Govt of Punjab",
+      "bid_reference_no": "PK-HD-2026-EOI",
+      "bid_description": "Engagement of a Firm for Conducting the Endline Punjab Health and Population Survey (PHPS) 2026-27",
+      "noticetitle": "Engagement of a Firm for Conducting the Endline Punjab Health and Population Survey (PHPS) 2026-27",
+      "submission_deadline_date": "2030-10-30T00:00:00Z",
+      "procurement_group_desc": "Consultant Services",
+      "notice_text": "<p>Expression of interest for survey services.</p>"
+    },
+    {
+      "id": "OP00476985",
+      "notice_type": "Contract Award",
+      "noticedate": "23-Oct-2026",
+      "project_ctry_code": "PK",
+      "agency_name": "School Education Department, Govt of Punjab",
+      "bid_reference_no": "PK-SED-2026-AWARD",
+      "noticetitle": "Award of school furniture contract",
+      "submission_deadline_date": "2030-11-01T00:00:00Z",
+      "notice_text": "<p>Award notice</p>"
+    },
+    {
+      "id": "OP00476986",
+      "notice_type": "Invitation for Bids",
+      "noticedate": "01-Jan-2020",
+      "project_ctry_code": "PK",
+      "agency_name": "Old Agency",
+      "bid_reference_no": "PK-OLD-2020",
+      "noticetitle": "Expired tender from 2020",
+      "submission_deadline_date": "2020-01-15T00:00:00Z",
+      "notice_text": "<p>Expired</p>"
+    }
+  ]
+}

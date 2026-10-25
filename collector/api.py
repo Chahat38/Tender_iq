@@ -80,6 +80,7 @@ if str(_SCRIPT_DIR) not in sys.path:
 
 import ai_endpoints  # noqa: E402
 from ai import Analysis, analyze  # noqa: E402
+from registry import SOURCE_CATALOG  # noqa: E402
 from search import SearchIndex  # noqa: E402
 from storage import NULL_DEADLINE_FILTER, Storage  # noqa: E402
 from storage_postgres import PostgresStorage  # noqa: E402
@@ -114,7 +115,7 @@ class FtsUnavailableError(RuntimeError):
 
 
 class SourceOut(BaseModel):
-    """One registered procurement source."""
+    """One registered procurement source and its latest health."""
 
     id: int
     name: str
@@ -125,6 +126,28 @@ class SourceOut(BaseModel):
     requires_authentication: int | None = None
     crawl_frequency: str | None = None
     last_crawled_at: str | None = None
+    last_success_at: str | None = None
+    base_url: str | None = None
+    last_status: str | None = None
+    consecutive_failures: int | None = None
+    opportunity_count: int = 0
+    last_error: str | None = None
+
+
+class CoverageOut(BaseModel):
+    """One entry in the requested-source coverage matrix."""
+
+    key: str
+    requested_name: str
+    source_name: str | None = None
+    status: str
+    url: str | None = None
+    note: str
+    source_id: int | None = None
+    last_crawled_at: str | None = None
+    last_success_at: str | None = None
+    opportunity_count: int | None = None
+    last_error: str | None = None
 
 
 class OpportunityOut(BaseModel):
@@ -711,6 +734,7 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
             "endpoints": {
                 "health": "/health",
                 "sources": "/sources",
+                "coverage": "/coverage",
                 "locations": "/locations",
                 "categories": "/categories",
                 "provinces": "/provinces",
@@ -746,10 +770,63 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
 
     @app.get("/sources", response_model=list[SourceOut], tags=["sources"])
     def list_sources() -> list[SourceOut]:
-        """All registered procurement sources."""
+        """All registered procurement sources and their latest health."""
         with data_lock:
             rows = _get_storage().list_sources()
         return [SourceOut(**row) for row in rows]
+
+    @app.get("/coverage", response_model=list[CoverageOut], tags=["sources"])
+    def coverage() -> list[CoverageOut]:
+        """The requested source matrix, including blocked/login-only entries.
+
+        Only entries with a live ``source_id`` are collectable and appear
+        in the normal source filter.  Blocked entries deliberately stay
+        out of ``/sources`` so they never look like a zero-result source.
+        """
+        with data_lock:
+            rows = _get_storage().list_sources()
+        by_name = {row["name"]: row for row in rows}
+        result: list[CoverageOut] = []
+        for spec in SOURCE_CATALOG:
+            row = by_name.get(spec.source_name) if spec.source_name else None
+            status = spec.status
+            if row is not None:
+                if row.get("active") != 1:
+                    status = "Not Tested"
+                elif row.get("requires_authentication") == 1:
+                    status = "Login Required"
+                elif row.get("robots_allowed") == 0:
+                    status = "Restricted"
+                elif row.get("last_status") == "failed":
+                    status = "Failed"
+                elif row.get("last_status") == "ok":
+                    status = "Active"
+                else:
+                    status = "Not Tested"
+            elif spec.status == "Active":
+                status = "Not Tested"
+            result.append(
+                CoverageOut(
+                    key=spec.key,
+                    requested_name=spec.requested_name,
+                    source_name=spec.source_name,
+                    status=status,
+                    url=(row.get("base_url") if row is not None else spec.url),
+                    note=spec.note,
+                    source_id=row.get("id") if row is not None else None,
+                    last_crawled_at=(
+                        row.get("last_crawled_at") if row is not None else None
+                    ),
+                    last_success_at=(
+                        row.get("last_success_at") if row is not None else None
+                    ),
+                    opportunity_count=(
+                        row.get("opportunity_count") if row is not None else None
+                    ),
+                    last_error=row.get("last_error") if row is not None else None,
+                )
+            )
+        return result
 
     @app.get(
         "/opportunities", response_model=OpportunityPage, tags=["opportunities"]

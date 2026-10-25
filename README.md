@@ -117,26 +117,41 @@ collection).
 
 | Adapter key | Source | Status |
 | --- | --- | --- |
-| `ppra_epms` | PPRA e-procurement (Tender/PQ/RFP/EOI) | live |
+| `ppra_epms` | Federal PPRA e-procurement (Tender/PQ/RFP/EOI) | live |
 | `kppra_active_tenders` | KPPRA active tenders | live |
 | `epads` | EPADS federal opportunities | live |
 | `ajk_ppra` | AJ&K PPRA advertisements | live |
 | `gb_ppra` | GB PPRA procurements | live |
 | `pakrail` | Pakistan Railways tenders | live |
 | `pia` | PIA tenders | live |
+| `sindh_sppra` | SPPRA Sindh e-procurement | live |
+| `punjab_eproc` | Punjab eProcurement (Punjab PPRA notices) | live |
+| `ptcl` | PTCL tenders | live |
+| `ndma` | NDMA tenders | live |
+| `dgdp` | DGDP tender/auction document archive | live |
+| `world_bank` | World Bank procurement notices (Pakistan) | live |
+| `paperpk` | PaperPK Tender Service (public aggregator fields) | live |
 
-Skipped after research (never crawled): UNDP (`procurement-notices.undp.org`
-and the `public-components.undp.org` notice widget embedded by
-`www.undp.org/pakistan/procurement` both return `Disallow: /`; the main
-site has no static notices, so its parser is kept offline-only in
-`collector/adapters/undp.py` but deliberately not registered), ADB (bot
-wall), NHA (robots 403), Sindh
-portal (central e-portal is a 2010-2019 archive, no live listing), Punjab
-eProcure (deferred until its TLS layer stops dropping automated
-clients; Punjab entities already appear via the federal EPMS), KPT
-(robots fetch fails in PoliteClient, so the robots gate never passes;
-its tenders are mirrored on EPADS anyway), WAPDA
-RSS (endpoint dead).
+The Sources page also shows a **requested-source coverage** matrix. It
+keeps blocked or login-only organizations visible without adding them to
+the collectable source filter:
+
+| Requested name | Coverage | Why |
+| --- | --- | --- |
+| Zong | Login Required | Vendor portal; no public tender listing found |
+| Jazz | Login Required | Vendor portal; no public tender listing found |
+| NDC | Not Tested | National Defence Complex; no verified public procurement domain |
+| C4I | Not Tested | No verified public procurement domain |
+| POF | Restricted | Every tested path returns a Cloudflare 403 challenge |
+| UNDP Pakistan | Restricted | Both notice hosts return `Disallow: /`; manual CSV/HTML import only |
+| PPPPRA | Active via Punjab eProcurement | Appears to mean Punjab PPRA; official notices collected there |
+
+Never crawled because access is forbidden: ADB (bot wall), NHA (robots
+403), KPT (robots fetch fails, tenders mirrored on EPADS), WAPDA RSS
+(endpoint dead). UNDP's parser is kept offline-only in
+`collector/adapters/undp.py` but deliberately not registered. POF is not
+registered because bypassing its bot challenge would violate the
+project's access policy.
 
 **Policy:** public pages only, no auth/CAPTCHA bypass, robots.txt is
 authoritative, `CONTACT_EMAIL` in the User-Agent, sources whose terms
@@ -167,7 +182,8 @@ python collector/main.py --backfill-taxonomy
 | Endpoint | Purpose |
 | --- | --- |
 | `GET /health` | liveness + coarse row counts |
-| `GET /sources` | registered sources |
+| `GET /sources` | registered sources with status, tender count, last crawl and last error |
+| `GET /coverage` | all 14 requested organizations, including blocked/login-only entries |
 | `GET /opportunities` | newest-first page (filters, capped limit) |
 | `POST /opportunities/query` | same, JSON body with tri-state deadline filter |
 | `GET /opportunities/{id}` | one opportunity + documents + update history |
@@ -276,7 +292,8 @@ secret and serve the UI as a plain static site.
 
 ```
 collector/            Python package (CLI entry: main.py / api.py)
-  adapters/           source adapters (ppra_epms, kppra, epads, ajk_ppra, gb_ppra, pakrail, pia)
+  adapters/           source adapters (PPRA, KPPRA, EPADS, AJK/GB PPRA, Railways, PIA,
+                      Sindh/Punjab, PTCL, NDMA, DGDP, World Bank, PaperPK)
   fixtures/           saved HTML for offline runs
   tests/              pytest suite (offline default)
   documents.py        document download/hash/extraction

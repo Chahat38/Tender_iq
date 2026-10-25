@@ -108,3 +108,67 @@ class TestRetries:
         client.session.get = lambda *a, **k: responses.pop(0)
         assert client.get(f"{BASE}/open/listing").status_code == 200
         assert len(sleeper.calls) == 1
+
+    def test_retries_when_connection_drops_mid_body(self) -> None:
+        """A reset during a chunked read is transient and must be retried."""
+        sleeper = RecordingSleeper()
+        client, _ = make_client(ROBOTS_DISALLOW_PRIVATE, sleeper=sleeper)
+        calls = {"n": 0}
+
+        def flaky(*args, **kwargs):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise requests.exceptions.ChunkedEncodingError("connection reset")
+            return fake_response(200, "<html>listing</html>")
+
+        client.session.get = flaky
+        response = client.get(f"{BASE}/open/listing")
+        assert response.status_code == 200
+        assert calls["n"] == 2
+        assert sleeper.calls == [1.0]  # one backoff before the retry
+
+    def test_retries_on_connection_error(self) -> None:
+        sleeper = RecordingSleeper()
+        client, _ = make_client(ROBOTS_DISALLOW_PRIVATE, sleeper=sleeper)
+        responses = [
+            requests.exceptions.ConnectionError("forcibly closed"),
+            fake_response(200),
+        ]
+
+        def sometimes(*args, **kwargs):
+            outcome = responses.pop(0)
+            if isinstance(outcome, Exception):
+                raise outcome
+            return outcome
+
+        client.session.get = sometimes
+        assert client.get(f"{BASE}/open/listing").status_code == 200
+        assert sleeper.calls == [1.0]
+
+    def test_gives_up_after_persistent_transport_failures(self) -> None:
+        sleeper = RecordingSleeper()
+        client, _ = make_client(ROBOTS_DISALLOW_PRIVATE, sleeper=sleeper, max_attempts=3)
+
+        def always_reset(*args, **kwargs):
+            raise requests.exceptions.ChunkedEncodingError("still broken")
+
+        client.session.get = always_reset
+        with pytest.raises(requests.exceptions.ChunkedEncodingError):
+            client.get(f"{BASE}/open/listing")
+        assert len(sleeper.calls) == 2  # backoff between each of 3 attempts
+
+    def test_ssl_failures_are_not_retried(self) -> None:
+        """A broken certificate chain is not transient: fail fast."""
+        sleeper = RecordingSleeper()
+        client, _ = make_client(ROBOTS_DISALLOW_PRIVATE, sleeper=sleeper)
+        calls = {"n": 0}
+
+        def bad_tls(*args, **kwargs):
+            calls["n"] += 1
+            raise requests.exceptions.SSLError("certificate verify failed")
+
+        client.session.get = bad_tls
+        with pytest.raises(requests.exceptions.SSLError):
+            client.get(f"{BASE}/open/listing")
+        assert calls["n"] == 1
+        assert sleeper.calls == []

@@ -115,6 +115,62 @@ class TestSources:
     def test_sources_empty_is_ok(self, harness) -> None:
         assert harness.client.get("/sources").json() == []
 
+    def test_source_health_fields_are_exposed(self, harness) -> None:
+        harness.add(source_name="PPRA EPMS")
+        row = harness.client.get("/sources").json()[0]
+        assert row["opportunity_count"] == 1
+        assert row["consecutive_failures"] == 0
+        assert row["base_url"] is None
+        assert row["last_success_at"] is None
+        assert "last_error" in row
+
+    def test_last_success_is_distinct_from_last_attempt(self, harness) -> None:
+        harness.add(source_name="PPRA EPMS")
+        source_id = harness.storage.list_sources()[0]["id"]
+        harness.storage.log_fetch(
+            source_id,
+            "2026-10-24T10:00:00+00:00",
+            "2026-10-24T10:01:00+00:00",
+            found=5,
+            created=5,
+            failed=0,
+        )
+        harness.storage.log_fetch(
+            source_id,
+            "2026-10-25T10:00:00+00:00",
+            "2026-10-25T10:01:00+00:00",
+            failed=1,
+            error_message="network down",
+        )
+        row = harness.client.get("/sources").json()[0]
+        assert row["last_success_at"] == "2026-10-24T10:01:00+00:00"
+        assert row["last_error"] == "network down"
+
+    def test_coverage_lists_all_requested_sources(self, harness) -> None:
+        response = harness.client.get("/coverage")
+        assert response.status_code == 200
+        rows = response.json()
+        assert len(rows) == 14
+        by_key = {row["key"]: row for row in rows}
+        assert by_key["undp"]["status"] == "Restricted"
+        assert by_key["pof"]["status"] == "Restricted"
+        assert by_key["zong"]["status"] == "Login Required"
+        assert by_key["jazz"]["status"] == "Login Required"
+        assert by_key["ndc"]["status"] == "Not Tested"
+        assert by_key["c4i"]["status"] == "Not Tested"
+        assert by_key["ptcl"]["status"] == "Not Tested"
+        assert by_key["federal_ppra"]["status"] == "Not Tested"
+
+    def test_coverage_uses_live_source_health(self, harness) -> None:
+        harness.add(source_name="PTCL Tenders")
+        row = next(
+            item
+            for item in harness.client.get("/coverage").json()
+            if item["key"] == "ptcl"
+        )
+        assert row["source_id"] is not None
+        assert row["opportunity_count"] == 1
+
 
 class TestOpportunityList:
     def test_list_is_newest_first_with_paging_metadata(

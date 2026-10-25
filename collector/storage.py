@@ -1568,9 +1568,18 @@ class Storage:
         self.conn.commit()
 
     def list_sources(self) -> list[dict[str, Any]]:
-        """Return every registered source row as a plain dict."""
+        """Return every source row plus its tender count and latest error."""
         rows = self.conn.execute(
-            "SELECT * FROM sources ORDER BY id"
+            "SELECT s.*, "
+            "(SELECT COUNT(*) FROM opportunities o "
+            " WHERE o.source_id = s.id) AS opportunity_count, "
+            "(SELECT l.finished_at FROM source_fetch_logs l "
+            " WHERE l.source_id = s.id AND l.failed = 0 "
+            " ORDER BY l.id DESC LIMIT 1) AS last_success_at, "
+            "(SELECT l.error_message FROM source_fetch_logs l "
+            " WHERE l.source_id = s.id AND l.error_message IS NOT NULL "
+            " ORDER BY l.id DESC LIMIT 1) AS last_error "
+            "FROM sources s ORDER BY s.id"
         ).fetchall()
         return [dict(row) for row in rows]
 
