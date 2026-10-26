@@ -1568,7 +1568,13 @@ class Storage:
         self.conn.commit()
 
     def list_sources(self) -> list[dict[str, Any]]:
-        """Return every source row plus its tender count and latest error."""
+        """Return every source row plus its tender count, last success and
+        the latest run's error.
+
+        ``last_error`` is the error of the **most recent** fetch log row,
+        so a source that failed once and later recovered reports ``None``
+        instead of a stale message.
+        """
         rows = self.conn.execute(
             "SELECT s.*, "
             "(SELECT COUNT(*) FROM opportunities o "
@@ -1577,7 +1583,7 @@ class Storage:
             " WHERE l.source_id = s.id AND l.failed = 0 "
             " ORDER BY l.id DESC LIMIT 1) AS last_success_at, "
             "(SELECT l.error_message FROM source_fetch_logs l "
-            " WHERE l.source_id = s.id AND l.error_message IS NOT NULL "
+            " WHERE l.source_id = s.id "
             " ORDER BY l.id DESC LIMIT 1) AS last_error "
             "FROM sources s ORDER BY s.id"
         ).fetchall()

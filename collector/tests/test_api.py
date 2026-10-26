@@ -146,6 +146,29 @@ class TestSources:
         assert row["last_success_at"] == "2026-10-24T10:01:00+00:00"
         assert row["last_error"] == "network down"
 
+    def test_last_error_is_cleared_by_a_later_success(self, harness) -> None:
+        """A recovered source must not keep showing its old failure."""
+        harness.add(source_name="PPRA EPMS")
+        source_id = harness.storage.list_sources()[0]["id"]
+        harness.storage.log_fetch(
+            source_id,
+            "2026-10-25T10:00:00+00:00",
+            "2026-10-25T10:01:00+00:00",
+            failed=1,
+            error_message="organization details column missing",
+        )
+        harness.storage.log_fetch(
+            source_id,
+            "2026-10-25T11:00:00+00:00",
+            "2026-10-25T11:01:00+00:00",
+            found=3,
+            created=3,
+            failed=0,
+        )
+        row = harness.client.get("/sources").json()[0]
+        assert row["last_error"] is None
+        assert row["last_success_at"] == "2026-10-25T11:01:00+00:00"
+
     def test_coverage_lists_all_requested_sources(self, harness) -> None:
         response = harness.client.get("/coverage")
         assert response.status_code == 200
