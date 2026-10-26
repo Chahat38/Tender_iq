@@ -36,7 +36,6 @@ if str(_SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(_SCRIPT_DIR))
 
 from adapters.ajk_ppra import AjkPpraAdapter  # noqa: E402
-from adapters.dgdp import DgdpAdapter  # noqa: E402
 from adapters.epads import EpadsAdapter  # noqa: E402
 from adapters.gb_ppra import GbPpraAdapter  # noqa: E402
 from adapters.kppra import KppraActiveTendersAdapter  # noqa: E402
@@ -72,7 +71,6 @@ ADAPTERS = {
     "punjab_eproc": PunjabEprocAdapter,
     "ptcl": PtclAdapter,
     "ndma": NdmaAdapter,
-    "dgdp": DgdpAdapter,
     "world_bank": WorldBankAdapter,
     "paperpk": PaperpkAdapter,
 }

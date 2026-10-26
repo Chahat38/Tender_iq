@@ -199,20 +199,6 @@ SOURCE_REGISTRY: dict[str, SourceSpec] = {
         requires_authentication=False,
         crawl_frequency="daily",
     ),
-    "dgdp": SourceSpec(
-        key="dgdp",
-        source_name="DGDP Tenders",
-        base_url="https://dgdp.gov.pk",
-        adapter_type="DgdpAdapter",
-        active=True,
-        # Research 2026-10-25: public downloads.php document archive,
-        # server-rendered; robots.txt 404 -> no restrictions declared;
-        # no login or CAPTCHA. The cards carry no deadlines, so the
-        # adapter leaves deadline=None rather than guessing.
-        terms_checked=True,
-        requires_authentication=False,
-        crawl_frequency="daily",
-    ),
     "world_bank": SourceSpec(
         key="world_bank",
         source_name="World Bank Procurement Notices",
@@ -294,15 +280,6 @@ SOURCE_CATALOG: tuple[CoverageSpec, ...] = (
         status="Active",
         url="https://ptcl.com.pk/Tenders",
         note="Public tender notices with direct PDFs.",
-    ),
-    CoverageSpec(
-        key="dgdp",
-        requested_name="DGDP",
-        source_name="DGDP Tenders",
-        status="Active",
-        url="https://dgdp.gov.pk/downloads.php",
-        note="Public tender/auction/corrigendum document archive; cards do not "
-        "state deadlines.",
     ),
     CoverageSpec(
         key="ndc",

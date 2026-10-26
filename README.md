@@ -16,11 +16,11 @@ Three cooperating pieces:
 
 ## Live demo
 
-* Frontend: <https://tenderiq-frontend-ebon.vercel.app>
-* API: <https://tenderiq-api-two.vercel.app> (`/health`, `/docs`)
+* Frontend: <https://tenderscout-app.vercel.app>
+* API: <https://tenderscout-api.vercel.app> (`/health`, `/docs`)
 
-The current deployment serves the bundled SQLite snapshot (2,586
-notices from 14 sources, refreshed by the daily `collect` workflow), so
+The current deployment serves the bundled SQLite snapshot (2,572
+notices from 13 sources, refreshed by the daily `collect` workflow), so
 it is a read-only demo rather than a live database. For live
 collection, run the collector against Supabase/Postgres and set
 `DATABASE_URL` on the Vercel API project.
@@ -129,7 +129,6 @@ collection).
 | `punjab_eproc` | Punjab eProcurement (Punjab PPRA notices) | live |
 | `ptcl` | PTCL tenders | live |
 | `ndma` | NDMA tenders | live |
-| `dgdp` | DGDP tender/auction document archive | live |
 | `world_bank` | World Bank procurement notices (Pakistan) | live |
 | `paperpk` | PaperPK Tender Service (public aggregator fields) | live |
 
@@ -184,7 +183,7 @@ python collector/main.py --backfill-taxonomy
 | --- | --- |
 | `GET /health` | liveness + coarse row counts |
 | `GET /sources` | registered sources with status, tender count, last crawl and last error |
-| `GET /coverage` | all 14 requested organizations, including blocked/login-only entries |
+| `GET /coverage` | all 13 requested organizations, including blocked/login-only entries |
 | `GET /opportunities` | newest-first page (filters, capped limit) |
 | `POST /opportunities/query` | same, JSON body with tri-state deadline filter |
 | `GET /opportunities/{id}` | one opportunity + documents + update history |
@@ -266,18 +265,18 @@ SQLite FTS5 (`api.py` `/search` branch).
    string from Settings → Database (session pooler works fine for a
    read-mostly demo).
 2. **API project** — at the repo root: `vercel login`, then
-   `vercel` (create project `tenderiq-api`, framework "Other"). Set the
+   `vercel` (create project `tenderscout-api`, framework "Other"). Set the
    environment variable `DATABASE_URL=<connection string>` and re-deploy.
    The function is `api/index.py` (ASGI `app`); the current production
-   alias is <https://tenderiq-api-two.vercel.app>, with routes such as
+   alias is <https://tenderscout-api.vercel.app>, with routes such as
    `/opportunities`, `/opportunities/{id}`, `/search`, …
 3. **Frontend project** — build with the API base set, then deploy from
    `frontend/`:
    ```bash
    cd frontend && npm install
-   # cross-env or PowerShell: $env:VITE_API_BASE="https://tenderiq-api-two.vercel.app"
-   VITE_API_BASE=https://tenderiq-api-two.vercel.app npm run build
-   vercel                # create project tenderiq-frontend (framework: Vite)
+   # cross-env or PowerShell: $env:VITE_API_BASE="https://tenderscout-api.vercel.app"
+   VITE_API_BASE=https://tenderscout-api.vercel.app npm run build
+   vercel                # create project tenderscout (framework: Vite)
    ```
    The app calls `${VITE_API_BASE}` for every endpoint; without it the
    built app assumes a same-origin `/api` proxy. The API allows the
@@ -294,7 +293,7 @@ secret and serve the UI as a plain static site.
 ```
 collector/            Python package (CLI entry: main.py / api.py)
   adapters/           source adapters (PPRA, KPPRA, EPADS, AJK/GB PPRA, Railways, PIA,
-                      Sindh/Punjab, PTCL, NDMA, DGDP, World Bank, PaperPK)
+                      Sindh/Punjab, PTCL, NDMA, World Bank, PaperPK)
   fixtures/           saved HTML for offline runs
   tests/              pytest suite (offline default)
   documents.py        document download/hash/extraction
