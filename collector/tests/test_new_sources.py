@@ -10,7 +10,6 @@ from pathlib import Path
 
 import pytest
 from adapters.base import SourceAdapter
-from adapters.dgdp import DgdpAdapter
 from adapters.ndma import NdmaAdapter
 from adapters.paperpk import PaperpkAdapter
 from adapters.ptcl import PtclAdapter
@@ -19,14 +18,13 @@ from registry import COVERAGE_STATUSES, SOURCE_CATALOG
 
 
 def test_requested_source_catalog_is_complete_and_valid() -> None:
-    assert len(SOURCE_CATALOG) == 14
-    assert len({item.key for item in SOURCE_CATALOG}) == 14
+    assert len(SOURCE_CATALOG) == 13
+    assert len({item.key for item in SOURCE_CATALOG}) == 13
     assert all(item.status in COVERAGE_STATUSES for item in SOURCE_CATALOG)
     assert {item.requested_name for item in SOURCE_CATALOG} == {
         "Zong",
         "Jazz",
         "PTCL",
-        "DGDP",
         "NDC",
         "C4I",
         "POF",
@@ -99,29 +97,6 @@ class TestNdma:
         assert (opportunity.deadline.month, opportunity.deadline.day) == (10, 22)
         assert opportunity.document_urls
         assert opportunity.document_urls[0].endswith(".pdf")
-
-
-class TestDgdp:
-    @pytest.fixture()
-    def adapter(self) -> DgdpAdapter:
-        return DgdpAdapter(offline=True)
-
-    def test_documents_are_collected_without_invented_deadline(
-        self, adapter: DgdpAdapter
-    ) -> None:
-        rows = adapter.fetch_listings()
-        assert len(rows) == 2
-        assert rows[0].external_id.startswith("DGDP-Tender Notice English")
-        assert rows[0].url.endswith("Tender+Notice+English.pdf")
-
-        opportunity = adapter.normalize(rows[0])
-        assert opportunity.published_at is not None
-        assert opportunity.published_at.year == 2025
-        assert opportunity.deadline is None
-        assert opportunity.document_urls == [rows[0].url]
-        assert opportunity.organization == (
-            "Directorate General of Defence Procurement (DGDP)"
-        )
 
 
 class TestWorldBank:

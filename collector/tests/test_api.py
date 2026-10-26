@@ -150,7 +150,7 @@ class TestSources:
         response = harness.client.get("/coverage")
         assert response.status_code == 200
         rows = response.json()
-        assert len(rows) == 14
+        assert len(rows) == 13
         by_key = {row["key"]: row for row in rows}
         assert by_key["undp"]["status"] == "Restricted"
         assert by_key["pof"]["status"] == "Restricted"

@@ -3,7 +3,7 @@
   "version": 2,
   "framework": "vite",
   "rewrites": [
-    { "source": "/api/(.*)", "destination": "https://tenderiq-api-two.vercel.app/api/$1" },
+    { "source": "/api/(.*)", "destination": "https://tenderscout-api.vercel.app/api/$1" },
     { "source": "/(.*)", "destination": "/index.html" }
   ]
 }
