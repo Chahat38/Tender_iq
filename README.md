@@ -19,9 +19,10 @@ Three cooperating pieces:
 * Frontend: <https://tenderiq-frontend-ebon.vercel.app>
 * API: <https://tenderiq-api-two.vercel.app> (`/health`, `/docs`)
 
-The current deployment serves the bundled SQLite snapshot (1,284 notices
-from 9 sources), so it is a read-only demo rather than a live database.
-For live collection, run the collector against Supabase/Postgres and set
+The current deployment serves the bundled SQLite snapshot (2,586
+notices from 14 sources, refreshed by the daily `collect` workflow), so
+it is a read-only demo rather than a live database. For live
+collection, run the collector against Supabase/Postgres and set
 `DATABASE_URL` on the Vercel API project.
 
 UNDP is shown on the Sources page as **researched but not collected**:
