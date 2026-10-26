@@ -173,7 +173,7 @@ class PostgresStorage:
                 " WHERE l.source_id = s.id AND l.failed = 0 "
                 " ORDER BY l.id DESC LIMIT 1) AS last_success_at, "
                 "(SELECT l.error_message FROM source_fetch_logs l "
-                " WHERE l.source_id = s.id AND l.error_message IS NOT NULL "
+                " WHERE l.source_id = s.id "
                 " ORDER BY l.id DESC LIMIT 1) AS last_error "
                 "FROM procurement_sources s ORDER BY s.id"
             )
