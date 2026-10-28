@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   ApiError,
   listCategories,
@@ -246,6 +246,33 @@ export default function App() {
     setOffset(0);
   }
 
+  // The vocabulary the search box predicts from: every browse facet plus
+  // the source names, de-duplicated. Built once per facet load so typing
+  // stays cheap.
+  const searchSuggestions = useMemo(
+    () =>
+      Array.from(
+        new Set([
+          ...sectors,
+          ...categories,
+          ...departments,
+          ...provinces,
+          ...locations,
+          ...procurementTypes,
+          ...sources.map((source) => source.name),
+        ]),
+      ),
+    [
+      sectors,
+      categories,
+      departments,
+      provinces,
+      locations,
+      procurementTypes,
+      sources,
+    ],
+  );
+
   return (
     <div className="flex min-h-screen flex-col bg-slate-950 text-slate-100">
       <NavBar page={pageName(route)} onNavigate={navigate} />
@@ -321,6 +348,7 @@ export default function App() {
               <SearchBar
                 value={searchInput}
                 active={searchQuery !== ""}
+                suggestions={searchSuggestions}
                 onValueChange={setSearchInput}
                 onSubmit={handleSubmitSearch}
                 onClear={handleClearSearch}

@@ -81,6 +81,7 @@ class TestDerivation:
             "province": "Punjab",
             "sector": "IT & Telecom",
             "department": "Information Technology",
+            "category": "Equipment & IT Infrastructure",
         }
 
     def test_city_implies_province(self) -> None:
@@ -97,11 +98,43 @@ class TestDerivation:
             province="Sindh",
             sector="Works",
             department="Custom Department",
+            category="Equipments",
         )
         assert changes == {}
 
     def test_nothing_derivable_returns_empty(self) -> None:
         assert derive_taxonomy(title="Quarterly progress meeting minutes") == {}
+
+    def test_business_area_categories_are_derived(self) -> None:
+        cases = {
+            "Supply of 100 laptops and docking stations": (
+                "Equipment & IT Infrastructure"
+            ),
+            "Consultancy services for software development": "Software Consultancy",
+            "Recruitment and manpower services for contract staff": (
+                "HR & Consultancy"
+            ),
+            "Security guards and CCTV surveillance services": (
+                "Security & Surveillance"
+            ),
+        }
+        for title, expected in cases.items():
+            assert derive_taxonomy(title=title)["category"] == expected
+
+    def test_category_is_not_derived_from_unrelated_text(self) -> None:
+        assert "category" not in derive_taxonomy(
+            title="Construction of boundary wall, Quetta"
+        )
+        assert "category" not in derive_taxonomy(
+            title="Supply of medical equipment"
+        )
+
+    def test_stored_category_is_never_overwritten(self) -> None:
+        changes = derive_taxonomy(
+            title="Supply of laptops and CCTV cameras",
+            category="Equipments",
+        )
+        assert "category" not in changes
 
     def test_undp_is_its_own_department(self) -> None:
         changes = derive_taxonomy(

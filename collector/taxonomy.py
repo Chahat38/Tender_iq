@@ -524,6 +524,48 @@ SECTOR_LABELS: tuple[str, ...] = (
     "Other",
 )
 
+#: Category labels this module can derive from the tender's own text.
+#: They extend the scraped category vocabulary (which is source-specific)
+#: with the business areas the browse UI asks for; an existing stored
+#: category is never overwritten.
+CATEGORY_LABELS: tuple[str, ...] = (
+    "Equipment & IT Infrastructure",
+    "Software Consultancy",
+    "HR & Consultancy",
+    "Security & Surveillance",
+)
+
+_CATEGORY_RULES: tuple[tuple[str, re.Pattern[str]], ...] = tuple(
+    (label, re.compile(pattern, re.I))
+    for label, pattern in (
+        (
+            "Security & Surveillance",
+            r"\b(?:securit\w*|surveillance|cctv|camera|guard\w*|watchman|"
+            r"security system\w*|access control|security services)\b",
+        ),
+        (
+            "Software Consultancy",
+            r"\b(?:software|web (?:site|portal|application)|web development|"
+            r"app development|source code|saas|erp|software house|"
+            r"software consultancy|it consultancy|it solution\w*)\b",
+        ),
+        (
+            "HR & Consultancy",
+            r"\b(?:human resource|\bhr\b|manpower|recruitment|staffing|"
+            r"personnel|secondment|headhunting|outsource\w* staff|"
+            r"consultancy services|consultancy firm|consulting services)\b",
+        ),
+        (
+            "Equipment & IT Infrastructure",
+            r"\b(?:it (?:equipment|infrastructure|hardware)|"
+            r"information technology infrastructure|laptops?|desktops?|"
+            r"computers?|computeri[sz]ed|servers?|network (?:equipment|"
+            r"switches|routers)|switches and routers|printers?|scanners?|"
+            r"\bups\b|data cent(?:er|re)|hardware)\b",
+        ),
+    )
+)
+
 _DEPARTMENT_LABELS: tuple[str, ...] = (
     "UNDP",
     "Information Technology",
@@ -772,8 +814,9 @@ def derive_taxonomy(
     province: str | None = None,
     sector: str | None = None,
     department: str | None = None,
+    category: str | None = None,
 ) -> dict[str, str]:
-    """Derive missing geography/sector fields from already-stated text.
+    """Derive missing geography/sector/category fields from stated text.
 
     Returns only the fields that should be filled in; an existing value is
     never replaced, and an empty mapping means "nothing derivable".
@@ -815,6 +858,11 @@ def derive_taxonomy(
         if derived_department:
             changes["department"] = derived_department
 
+    if not _clean(category):
+        derived_category = _first_match(text, _CATEGORY_RULES)
+        if derived_category:
+            changes["category"] = derived_category
+
     return changes
 
 
@@ -832,6 +880,7 @@ def enrich_taxonomy(opportunity: "NormalizedOpportunity") -> "NormalizedOpportun
         province=opportunity.province,
         sector=opportunity.sector,
         department=opportunity.department,
+        category=opportunity.category,
     )
     if not changes:
         return opportunity
@@ -856,6 +905,7 @@ def backfill(storage: Any) -> int:
             province=row.get("province"),
             sector=row.get("sector"),
             department=row.get("department"),
+            category=row.get("category"),
         )
         if not changes:
             continue

@@ -1545,7 +1545,7 @@ class Storage:
         """
         rows = self.conn.execute(
             "SELECT id, title, organization, description, location, province, "
-            "sector, department FROM opportunities"
+            "sector, department, category FROM opportunities"
         ).fetchall()
         return [dict(row) for row in rows]
 
@@ -1555,7 +1555,7 @@ class Storage:
         Only known column names are accepted; the backfill builds them
         from :mod:`taxonomy`, never from user input.
         """
-        allowed = ("location", "province", "sector", "department")
+        allowed = ("location", "province", "sector", "department", "category")
         updates = [(key, values[key]) for key in allowed if values.get(key)]
         if not updates:
             return
