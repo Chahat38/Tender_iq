@@ -1288,8 +1288,8 @@ class PostgresStorage:
         """Columns needed by the taxonomy backfill (Postgres mirror)."""
         with self.conn.cursor() as cur:
             cur.execute(
-                "SELECT id, title, organization, description, location, province, "
-                "sector, department FROM opportunities"
+            "SELECT id, title, organization, description, location, province, "
+            "sector, department, category FROM opportunities"
             )
             rows = cur.fetchall()
         return [dict(row) for row in rows]
@@ -1300,7 +1300,7 @@ class PostgresStorage:
         Only the four known column names are accepted, so the SQL is never
         built from user input.
         """
-        allowed = ("location", "province", "sector", "department")
+        allowed = ("location", "province", "sector", "department", "category")
         updates = [(key, values[key]) for key in allowed if values.get(key)]
         if not updates:
             return
