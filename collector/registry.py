@@ -213,21 +213,6 @@ SOURCE_REGISTRY: dict[str, SourceSpec] = {
         requires_authentication=False,
         crawl_frequency="daily",
     ),
-    "paperpk": SourceSpec(
-        key="paperpk",
-        source_name="PaperPK Tender Service",
-        base_url="https://tenderservice.pk",
-        adapter_type="PaperpkAdapter",
-        active=True,
-        # Research 2026-10-25: public home listing and public detail
-        # fields; robots.txt has no wildcard disallow on either
-        # tenderservice.pk or paperpk.com; no login is needed for the
-        # collected fields. This is an aggregator, not an official
-        # procuring entity; subscription-only content is not fetched.
-        terms_checked=True,
-        requires_authentication=False,
-        crawl_frequency="daily",
-    ),
 }
 
 
@@ -318,15 +303,6 @@ SOURCE_CATALOG: tuple[CoverageSpec, ...] = (
         url="https://ndma.gov.pk/tenders",
         note="Public tender cards and direct PDFs; evaluation reports are "
         "skipped.",
-    ),
-    CoverageSpec(
-        key="paperpk",
-        requested_name="PAPERPK",
-        source_name="PaperPK Tender Service",
-        status="Active",
-        url="https://tenderservice.pk/",
-        note="Public aggregator listing/detail fields only; subscription-only "
-        "content is not fetched. Not an official procuring entity.",
     ),
     CoverageSpec(
         key="world_bank",

@@ -9,17 +9,15 @@ from datetime import datetime
 from pathlib import Path
 
 import pytest
-from adapters.base import SourceAdapter
 from adapters.ndma import NdmaAdapter
-from adapters.paperpk import PaperpkAdapter
 from adapters.ptcl import PtclAdapter
 from adapters.world_bank import WorldBankAdapter
 from registry import COVERAGE_STATUSES, SOURCE_CATALOG
 
 
 def test_requested_source_catalog_is_complete_and_valid() -> None:
-    assert len(SOURCE_CATALOG) == 13
-    assert len({item.key for item in SOURCE_CATALOG}) == 13
+    assert len(SOURCE_CATALOG) == 12
+    assert len({item.key for item in SOURCE_CATALOG}) == 12
     assert all(item.status in COVERAGE_STATUSES for item in SOURCE_CATALOG)
     assert {item.requested_name for item in SOURCE_CATALOG} == {
         "Zong",
@@ -29,7 +27,6 @@ def test_requested_source_catalog_is_complete_and_valid() -> None:
         "C4I",
         "POF",
         "NDMA",
-        "PAPERPK",
         "World Bank",
         "UNDP Pakistan",
         "KPPRA",
@@ -132,39 +129,3 @@ class TestWorldBank:
         assert deadline is not None
         assert deadline.date() == datetime(2030, 11, 5).date()
         assert deadline.utcoffset() is not None
-
-
-class TestPaperpk:
-    @pytest.fixture()
-    def adapter(self) -> PaperpkAdapter:
-        return PaperpkAdapter(offline=True)
-
-    def test_listing_fields(self, adapter: PaperpkAdapter) -> None:
-        rows = adapter.fetch_listings()
-        assert len(rows) == 2
-        first = rows[0]
-        assert first.external_id.startswith("1501581/")
-        assert first.url.startswith("https://tenderservice.pk/1501581/")
-        assert first.raw_data["published_at"].year == 2026
-        assert first.raw_data["description"].startswith("Annual maintenance")
-
-    def test_detail_fields_and_merge(self, adapter: PaperpkAdapter) -> None:
-        listing = adapter.normalize(adapter.fetch_listings()[0])
-        detail = adapter.normalize_detail(
-            adapter.fetch_opportunity(listing.external_id)
-        )
-        assert detail.reference_number == "Ts1501581e"
-        assert detail.organization == "Pakistan Revenue Automation Pvt Ltd"
-        assert detail.location == "Islamabad"
-        assert detail.category == "Security"
-        assert detail.deadline is not None
-        assert (detail.deadline.month, detail.deadline.day) == (10, 25)
-        assert detail.document_urls == [
-            "https://tenderservice.pk/documents/pral-tender.pdf"
-        ]
-
-        merged = SourceAdapter.merge_listing_with_detail(listing, detail)
-        assert merged.title == listing.title
-        assert merged.organization == detail.organization
-        assert merged.deadline == detail.deadline
-        assert merged.document_urls == detail.document_urls

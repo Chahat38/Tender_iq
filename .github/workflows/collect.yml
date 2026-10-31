@@ -90,7 +90,7 @@ jobs:
         env:
           TENDERSCOUT_DB_PATH: collector/tenderscout.db
         run: |
-          for source in ppra_epms kppra_active_tenders epads ajk_ppra gb_ppra pakrail pia sindh_sppra punjab_eproc ptcl ndma world_bank paperpk; do
+          for source in ppra_epms kppra_active_tenders epads ajk_ppra gb_ppra pakrail pia sindh_sppra punjab_eproc ptcl ndma world_bank; do
             python scripts/compliance_check.py --source "$source" || echo "compliance gate failed for $source (seen in collect logs)"
           done
 
@@ -108,7 +108,7 @@ jobs:
         run: |
           mkdir -p collector/logs
           failed=0
-          for adapter in ppra_epms kppra_active_tenders epads ajk_ppra gb_ppra pakrail pia sindh_sppra punjab_eproc ptcl ndma world_bank paperpk; do
+          for adapter in ppra_epms kppra_active_tenders epads ajk_ppra gb_ppra pakrail pia sindh_sppra punjab_eproc ptcl ndma world_bank; do
             echo "===== $adapter ====="
             # --enrich-limit caps detail-page fetches per source (bounded
             # enrichment so a run never overruns the timeout).
