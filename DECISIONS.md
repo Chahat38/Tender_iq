@@ -178,9 +178,8 @@ JSON response before implementation:
 | `ptcl` | PTCL tenders | robots allows `/Tenders`; listing dates parsed from `From ... To ...`; detail PDFs enriched |
 | `ndma` | NDMA tenders | robots disallows only `/admin` and `/api`; 34-page `?page=N` listing; evaluation reports are excluded because they are procurement results, not opportunities |
 | `world_bank` | World Bank Pakistan | official JSON API; newest 300 notices scanned; contract awards and expired deadlines excluded |
-| `paperpk` | PaperPK Tender Service | public listing and public detail fields only; no subscription or login-only content; source URLs and reference IDs preserved |
 
-The 13 requested names are exposed by `GET /coverage` even when a source
+The 12 requested names are exposed by `GET /coverage` even when a source
 cannot be collected. `SOURCE_CATALOG` (not `SOURCE_REGISTRY`) holds
 blocked/login-only entries because the wiring test requires every
 registered spec to pass the compliance gate. Zong and Jazz are login
@@ -195,7 +194,15 @@ DGDP was collected for one day (its `downloads.php` document archive
 parsed cleanly, 14 rows) and then removed at the user's request: the
 adapter, fixture and tests are deleted, the spec and coverage entry are
 unregistered, and its rows are dropped from the demo snapshot. The
-remaining 13 sources are unaffected.
+remaining sources are unaffected.
+
+### PaperPK removed 2026-10-30
+
+PaperPK (tenderservice.pk) was an aggregator rather than an official
+procuring entity and was removed at the user's request: adapter,
+fixtures and tests are deleted, the spec and coverage entry are
+unregistered, its rows are dropped from the demo snapshot, and the
+collect workflow loop no longer lists it. Twelve sources remain.
 
 ### Live verification 2026-10-25
 

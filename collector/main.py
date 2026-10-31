@@ -41,7 +41,6 @@ from adapters.gb_ppra import GbPpraAdapter  # noqa: E402
 from adapters.kppra import KppraActiveTendersAdapter  # noqa: E402
 from adapters.ndma import NdmaAdapter  # noqa: E402
 from adapters.pakrail import PakrailAdapter  # noqa: E402
-from adapters.paperpk import PaperpkAdapter  # noqa: E402
 from adapters.pia import PiaAdapter  # noqa: E402
 from adapters.ppra_epms import PPRAEpmsAdapter  # noqa: E402
 from adapters.ptcl import PtclAdapter  # noqa: E402
@@ -72,7 +71,6 @@ ADAPTERS = {
     "ptcl": PtclAdapter,
     "ndma": NdmaAdapter,
     "world_bank": WorldBankAdapter,
-    "paperpk": PaperpkAdapter,
 }
 
 

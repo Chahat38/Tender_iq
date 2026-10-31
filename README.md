@@ -19,8 +19,8 @@ Three cooperating pieces:
 * Frontend: <https://tenderscout-app.vercel.app>
 * API: <https://tenderscout-api.vercel.app> (`/health`, `/docs`)
 
-The current deployment serves the bundled SQLite snapshot (2,572
-notices from 13 sources, refreshed by the daily `collect` workflow), so
+The current deployment serves the bundled SQLite snapshot (2,344
+notices from 12 sources, refreshed by the daily `collect` workflow), so
 it is a read-only demo rather than a live database. For live
 collection, run the collector against Supabase/Postgres and set
 `DATABASE_URL` on the Vercel API project.
@@ -130,7 +130,6 @@ collection).
 | `ptcl` | PTCL tenders | live |
 | `ndma` | NDMA tenders | live |
 | `world_bank` | World Bank procurement notices (Pakistan) | live |
-| `paperpk` | PaperPK Tender Service (public aggregator fields) | live |
 
 The Sources page also shows a **requested-source coverage** matrix. It
 keeps blocked or login-only organizations visible without adding them to
@@ -183,7 +182,7 @@ python collector/main.py --backfill-taxonomy
 | --- | --- |
 | `GET /health` | liveness + coarse row counts |
 | `GET /sources` | registered sources with status, tender count, last crawl and last error |
-| `GET /coverage` | all 13 requested organizations, including blocked/login-only entries |
+| `GET /coverage` | all 12 requested organizations, including blocked/login-only entries |
 | `GET /opportunities` | newest-first page (filters, capped limit) |
 | `POST /opportunities/query` | same, JSON body with tri-state deadline filter |
 | `GET /opportunities/{id}` | one opportunity + documents + update history |
@@ -293,7 +292,7 @@ secret and serve the UI as a plain static site.
 ```
 collector/            Python package (CLI entry: main.py / api.py)
   adapters/           source adapters (PPRA, KPPRA, EPADS, AJK/GB PPRA, Railways, PIA,
-                      Sindh/Punjab, PTCL, NDMA, World Bank, PaperPK)
+                      Sindh/Punjab, PTCL, NDMA, World Bank)
   fixtures/           saved HTML for offline runs
   tests/              pytest suite (offline default)
   documents.py        document download/hash/extraction
