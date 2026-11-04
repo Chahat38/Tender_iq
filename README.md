@@ -268,15 +268,26 @@ SQLite FTS5 (`api.py` `/search` branch).
    environment variable `DATABASE_URL=<connection string>` and re-deploy.
    The function is `api/index.py` (ASGI `app`); the current production
    alias is <https://tenderscout-api.vercel.app>, with routes such as
-   `/opportunities`, `/opportunities/{id}`, `/search`, …
+   `/opportunities`, `/opportunities/{id}`, `/search`, … The project is
+   GitHub-connected, so every push to `main` (including the daily
+   `collect: refresh demo snapshot` commit) builds and promotes a new
+   production deployment — do not run `vercel deploy` locally for data
+   refresh.
 3. **Frontend project** — build with the API base set, then deploy from
    `frontend/`:
    ```bash
    cd frontend && npm install
-   # cross-env or PowerShell: $env:VITE_API_BASE="https://tenderscout-api.vercel.app"
-   VITE_API_BASE=https://tenderscout-api.vercel.app npm run build
-   vercel                # create project tenderscout (framework: Vite)
+   # cross-env or PowerShell: $env:VITE_API_BASE="https://tenderscout-api-chahat38s-projects.vercel.app"
+   VITE_API_BASE=https://tenderscout-api-chahat38s-projects.vercel.app npm run build
+   vercel --prod          # project tenderscout (framework: Vite)
    ```
+   `frontend/vercel.json` proxies `/api/*` to the API project's *canonical*
+   production domain, not to the `tenderscout-api.vercel.app` alias:
+   `vercel alias` domains are static snapshots and keep serving the
+   deployment they were created for, so pointing the proxy at an alias
+   freezes the data. The frontend project's Root Directory must be
+   `frontend` before Git auto-deploy is enabled for it; with the default
+   `.` the repo root (the API) is built instead.
    The app calls `${VITE_API_BASE}` for every endpoint; without it the
    built app assumes a same-origin `/api` proxy. The API allows the
    static frontend origin through CORS by default (`*`); set
