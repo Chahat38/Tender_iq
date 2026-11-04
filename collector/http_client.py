@@ -116,18 +116,51 @@ class PoliteClient:
         401/403 are treated as "disallow everything" by convention;
         other 4xx codes mean no robots.txt exists, so crawling is
         allowed; 5xx and network errors return ``None`` (refuse).
+
+        Timeouts, resets and 5xx are retried with the same exponential
+        backoff as page fetches: a single RST while reading robots.txt
+        must not mark an otherwise healthy source as dead for the whole
+        day, which is what a one-shot attempt did.
         """
-        self._respect_delay()
-        try:
-            response = self.session.get(robots_url, timeout=self.timeout)
-        except requests.RequestException:
+        for attempt in range(1, self.max_attempts + 1):
+            self._respect_delay()
+            try:
+                response = self.session.get(robots_url, timeout=self.timeout)
+            except requests.RequestException as exc:
+                if attempt < self.max_attempts:
+                    backoff = self.backoff_base ** (attempt - 1)
+                    logger.warning(
+                        "robots.txt %s failed (%s) on attempt %d/%d; "
+                        "retrying in %.1fs",
+                        robots_url,
+                        type(exc).__name__,
+                        attempt,
+                        self.max_attempts,
+                        backoff,
+                    )
+                    self.sleep_func(backoff)
+                    continue
+                return None
+            if response.status_code == 200:
+                return response.text
+            if response.status_code in (401, 403):
+                return "User-agent: *\nDisallow: /"
+            if 400 <= response.status_code < 500:
+                return ""
+            if attempt < self.max_attempts:
+                backoff = self.backoff_base ** (attempt - 1)
+                logger.warning(
+                    "robots.txt %s returned HTTP %d on attempt %d/%d; "
+                    "retrying in %.1fs",
+                    robots_url,
+                    response.status_code,
+                    attempt,
+                    self.max_attempts,
+                    backoff,
+                )
+                self.sleep_func(backoff)
+                continue
             return None
-        if response.status_code == 200:
-            return response.text
-        if response.status_code in (401, 403):
-            return "User-agent: *\nDisallow: /"
-        if 400 <= response.status_code < 500:
-            return ""
         return None
 
     def _robot_parser_for(self, url: str) -> robotparser.RobotFileParser | None:

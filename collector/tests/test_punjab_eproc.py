@@ -151,3 +151,41 @@ class TestRunOffline:
         adapter = PunjabEprocAdapter(offline=True)
         with pytest.raises(FileNotFoundError, match="punjab_eproc_listing"):
             adapter.fetch_listings()
+
+
+class TestChromeLocator:
+    """The Linux CI install only provides google-chrome-stable."""
+
+    def test_finds_google_chrome_stable_from_path(self, monkeypatch, tmp_path) -> None:
+        import adapters.punjab_eproc as mod
+
+        binary = tmp_path / "google-chrome-stable"
+        binary.write_text("#!/bin/sh\n", encoding="utf-8")
+        monkeypatch.setattr(
+            mod.shutil,
+            "which",
+            lambda name: str(binary) if name == "google-chrome-stable" else None,
+        )
+        captured = {}
+
+        class Completed:
+            stdout = "<html>listing</html>"
+            stderr = ""
+
+        def fake_run(command, **kwargs):
+            captured["argv"] = command
+            return Completed()
+
+        monkeypatch.setattr(mod.subprocess, "run", fake_run)
+        assert mod.chrome_fetch_fallback("https://example.test/x") == (
+            "<html>listing</html>"
+        )
+        assert captured["argv"][0] == str(binary)
+
+    def test_raises_when_no_binary_is_installed(self, monkeypatch) -> None:
+        import adapters.punjab_eproc as mod
+
+        monkeypatch.setattr(mod.shutil, "which", lambda name: None)
+        monkeypatch.setattr(mod.Path, "is_file", lambda self: False)
+        with pytest.raises(RuntimeError, match="no Chrome binary"):
+            mod.chrome_fetch_fallback("https://example.test/x")

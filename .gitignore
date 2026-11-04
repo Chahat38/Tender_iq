@@ -14,6 +14,15 @@ __pycache__/
 *.db-shm
 *.sqlite3
 
+# Local run artifacts: per-source logs, DB backups and check screenshots.
+# Only the bundled demo snapshot (collector/demo/db.tenderscout) is
+# tracked on purpose; a stray `git add -A` must not push the backups.
+collector/logs/
+var/*.log
+var/*.tenderscout
+screenshots/
+frontend/tsconfig.tsbuildinfo
+
 # Node (React front end, later stages)
 node_modules/
 

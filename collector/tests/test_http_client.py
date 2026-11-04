@@ -172,3 +172,66 @@ class TestRetries:
             client.get(f"{BASE}/open/listing")
         assert calls["n"] == 1
         assert sleeper.calls == []
+
+
+class TestRobotsFetchRetries:
+    """robots.txt itself is retried before a source is declared unreachable."""
+
+    def _client(self, sleeper: RecordingSleeper, **kwargs) -> PoliteClient:
+        return PoliteClient(
+            delay=0,
+            sleep_func=sleeper,
+            contact_email="test@example.com",
+            **kwargs,
+        )
+
+    def test_retries_robots_after_connection_error(self) -> None:
+        sleeper = RecordingSleeper()
+        client = self._client(sleeper)
+        responses = [
+            requests.exceptions.ConnectionError("forcibly closed"),
+            fake_response(200, "User-agent: *\nDisallow: /private/\n"),
+        ]
+
+        def sometimes(*args, **kwargs):
+            outcome = responses.pop(0)
+            if isinstance(outcome, Exception):
+                raise outcome
+            return outcome
+
+        client.session.get = sometimes
+        assert client.is_allowed(f"{BASE}/open/listing") is True
+        assert sleeper.calls == [1.0]
+
+    def test_retries_robots_after_server_error(self) -> None:
+        sleeper = RecordingSleeper()
+        client = self._client(sleeper)
+        responses = [fake_response(503), fake_response(200, "User-agent: *\n")]
+        client.session.get = lambda *a, **k: responses.pop(0)
+        assert client.is_allowed(f"{BASE}/open/listing") is True
+        assert sleeper.calls == [1.0]
+
+    def test_still_refuses_after_persistent_robots_failures(self) -> None:
+        sleeper = RecordingSleeper()
+        client = self._client(sleeper, max_attempts=3)
+
+        def always_reset(*args, **kwargs):
+            raise requests.exceptions.ChunkedEncodingError("still broken")
+
+        client.session.get = always_reset
+        assert client.robots_allowed(f"{BASE}/open/listing") is None
+        assert len(sleeper.calls) == 2  # backoff between each of 3 attempts
+
+    def test_missing_robots_is_allowed_without_retrying(self) -> None:
+        sleeper = RecordingSleeper()
+        client = self._client(sleeper)
+        calls = {"n": 0}
+
+        def not_found(*args, **kwargs):
+            calls["n"] += 1
+            return fake_response(404, "<html>404</html>")
+
+        client.session.get = not_found
+        assert client.is_allowed(f"{BASE}/open/listing") is True
+        assert calls["n"] == 1
+        assert sleeper.calls == []

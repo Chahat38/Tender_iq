@@ -128,14 +128,21 @@ def chrome_fetch_fallback(url: str, timeout: float = 60.0) -> str | None:
     must only be called after a polite direct fetch has already failed,
     never first.
 
-    Chrome is located from PATH or common Windows install locations.
+    Chrome is located from PATH or common install locations. The Linux
+    names matter in CI: ``apt install google-chrome-stable`` only provides
+    ``google-chrome-stable``/``google-chrome``, never bare ``chrome``.
     When no binary exists a RuntimeError is raised (loud failure).
     """
     candidates = [
+        shutil.which("google-chrome-stable"),
+        shutil.which("google-chrome"),
+        shutil.which("chromium"),
+        shutil.which("chromium-browser"),
         shutil.which("chrome"),
         shutil.which("chrome-stable"),
         r"C:\Program Files\Google\Chrome\Application\chrome.exe",
         r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+        "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
     ]
     binary = next((c for c in candidates if c and Path(c).is_file()), None)
     if binary is None:
