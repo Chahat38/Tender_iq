@@ -18,6 +18,10 @@ collector/fixtures/
 *.sqlite3
 *.log
 
+# Local runtime artifacts: crawl logs, dev DB copies and pre-change backups
+var/
+imports/
+
 # Docs and CI (not part of the API bundle)
 .github/
 scripts/
