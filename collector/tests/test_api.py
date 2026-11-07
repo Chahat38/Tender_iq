@@ -176,7 +176,9 @@ class TestSources:
         assert len(rows) == 12
         by_key = {row["key"]: row for row in rows}
         assert by_key["undp"]["status"] == "Restricted"
-        assert by_key["pof"]["status"] == "Restricted"
+        # No POF source row exists in this harness, so the catalog entry
+        # shows as Not Tested until a collection run registers it.
+        assert by_key["pof"]["status"] == "Not Tested"
         assert by_key["zong"]["status"] == "Login Required"
         assert by_key["jazz"]["status"] == "Login Required"
         assert by_key["ndc"]["status"] == "Not Tested"
@@ -192,6 +194,24 @@ class TestSources:
             if item["key"] == "ptcl"
         )
         assert row["source_id"] is not None
+        assert row["opportunity_count"] == 1
+
+    def test_coverage_reports_a_healthy_pof_source_as_active(self, harness) -> None:
+        harness.add(source_name="POF Tenders")
+        source_id = harness.storage.list_sources()[0]["id"]
+        harness.storage.set_source_status(
+            source_id,
+            last_status="ok",
+            last_crawled_at="2026-11-06T10:01:00+00:00",
+            consecutive_failures=0,
+        )
+        row = next(
+            item
+            for item in harness.client.get("/coverage").json()
+            if item["key"] == "pof"
+        )
+        assert row["source_id"] is not None
+        assert row["status"] == "Active"
         assert row["opportunity_count"] == 1
 
 

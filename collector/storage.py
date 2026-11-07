@@ -1233,7 +1233,69 @@ class Storage:
             )
         if expired_ids:
             self.conn.commit()
+            self.repair_duplicate_groups()
         return len(expired_ids)
+
+    def repair_duplicate_groups(self) -> int:
+        """Fix duplicate-group bookkeeping broken by pruning.
+
+        Deleting an expired row can leave its group without a primary
+        (the deduped view then shows nothing for that notice) or with a
+        stale ``source_count``. This ungroups groups that fell back to a
+        single member, promotes the oldest remaining member of every
+        group that lost its primary, and refreshes ``source_count``.
+
+        Returns how many rows were repaired. Safe to run repeatedly.
+        """
+        repaired = 0
+
+        # 1. A one-member group is not a duplicate group any more.
+        cur = self.conn.execute(
+            """
+            UPDATE opportunities
+            SET duplicate_group_id = NULL, is_primary = 1, source_count = 1
+            WHERE duplicate_group_id IN (
+                SELECT duplicate_group_id FROM opportunities
+                WHERE duplicate_group_id IS NOT NULL
+                GROUP BY duplicate_group_id HAVING COUNT(*) = 1
+            )
+            """
+        )
+        repaired += max(cur.rowcount, 0)
+
+        # 2. A group whose primary was pruned keeps its other members.
+        for row in self.conn.execute(
+            """
+            SELECT duplicate_group_id FROM opportunities
+            WHERE duplicate_group_id IS NOT NULL
+            GROUP BY duplicate_group_id HAVING SUM(is_primary) = 0
+            """
+        ).fetchall():
+            member = self.conn.execute(
+                "SELECT id FROM opportunities WHERE duplicate_group_id = ? "
+                "ORDER BY first_seen_at, id LIMIT 1",
+                (row["duplicate_group_id"],),
+            ).fetchone()
+            if member is not None:
+                self.conn.execute(
+                    "UPDATE opportunities SET is_primary = 1 WHERE id = ?",
+                    (member["id"],),
+                )
+                repaired += 1
+
+        # 3. source_count always reflects the members still present.
+        self.conn.execute(
+            """
+            UPDATE opportunities
+            SET source_count = (
+                SELECT COUNT(DISTINCT other.source_id) FROM opportunities other
+                WHERE other.duplicate_group_id = opportunities.duplicate_group_id
+            )
+            WHERE duplicate_group_id IS NOT NULL
+            """
+        )
+        self.conn.commit()
+        return repaired
 
     def count_sources(self) -> int:
         """Return the total number of registered sources."""
@@ -1268,7 +1330,10 @@ class Storage:
 
         By default only primary rows are returned (``primary_only``) -
         the same notice found on several sources shows once, under the
-        source that reported it first - and rows are ordered newest
+        source that reported it first. With ``source_id`` set, the group
+        representative of that source's duplicated notices is returned
+        instead of nothing, so a source that is always the second
+        reporter (POF) still lists its tenders. Rows are ordered newest
         first (``sort`` ``"newest"``). ``sort="closing"`` orders by
         earliest deadline (undated rows last, ties newest first).
         ``limit`` is clamped to [0, :data:`_API_RESULT_LIMIT_MAX`] and
@@ -1376,8 +1441,20 @@ class Storage:
         where = []
         params: list[Any] = []
         if source_id is not None:
-            where.append("source_id = ?")
-            params.append(source_id)
+            if primary_only:
+                # One row per notice, resolved through the duplicate group:
+                # the selected source's own primary rows plus the group
+                # representative of notices it shares with another source
+                # (POF's notices are reported by the federal portal first).
+                where.append(
+                    "(is_primary = 1 AND (source_id = ? OR duplicate_group_id IN "
+                    "(SELECT duplicate_group_id FROM opportunities "
+                    "WHERE source_id = ? AND duplicate_group_id IS NOT NULL)))"
+                )
+                params.extend([source_id, source_id])
+            else:
+                where.append("source_id = ?")
+                params.append(source_id)
         if deadline_from:
             # Date-only inclusive lower bound on the deadline's local date.
             where.append("deadline IS NOT NULL AND substr(deadline, 1, 10) >= ?")
@@ -1441,10 +1518,11 @@ class Storage:
                 ") > datetime(?))"
             )
             params.append(_db_value(exclude_expired))
-        if primary_only:
+        if primary_only and source_id is None:
             # One listed tender per notice even when the collector
             # found the same notice on several sources (the primary row
-            # is the source that saw it first).
+            # is the source that saw it first). A source filter is
+            # resolved through the duplicate group above instead.
             where.append("is_primary = 1")
         if procurement_type:
             where.append(

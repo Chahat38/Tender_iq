@@ -1156,8 +1156,21 @@ class PostgresStorage:
         where = []
         params: list[Any] = []
         if source_id is not None:
-            where.append("o.source_id = %s")
-            params.append(source_id)
+            if primary_only:
+                # Mirror storage.py: resolve the source's notices through
+                # their duplicate group so a source that is always the
+                # second reporter (POF) still lists its tenders.
+                where.append(
+                    "(o.is_primary = TRUE AND (o.source_id = %s OR "
+                    "o.duplicate_group_id IN "
+                    "(SELECT dup.duplicate_group_id FROM opportunities dup "
+                    "WHERE dup.source_id = %s "
+                    "AND dup.duplicate_group_id IS NOT NULL)))"
+                )
+                params.extend([source_id, source_id])
+            else:
+                where.append("o.source_id = %s")
+                params.append(source_id)
         if location:
             # Mirror storage.py: scraped locations are free text and some
             # sources leave the column empty, so match the stated text too.
@@ -1210,7 +1223,7 @@ class PostgresStorage:
             else:
                 where.append("(o.deadline IS NOT NULL AND o.deadline > %s)")
                 params.append(deadline_after)
-        if primary_only:
+        if primary_only and source_id is None:
             where.append("o.is_primary = TRUE")
         clause = f" WHERE {' AND '.join(where)}" if where else ""
         return clause, params

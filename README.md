@@ -129,6 +129,7 @@ collection).
 | `punjab_eproc` | Punjab eProcurement (Punjab PPRA notices) | live |
 | `ptcl` | PTCL tenders | live |
 | `ndma` | NDMA tenders | live |
+| `pof` | Pakistan Ordnance Factories (POF) tenders, via the public PPRA EPMS listing | live |
 | `world_bank` | World Bank procurement notices (Pakistan) | live |
 
 The Sources page also shows a **requested-source coverage** matrix. It
@@ -141,16 +142,17 @@ the collectable source filter:
 | Jazz | Login Required | Vendor portal; no public tender listing found |
 | NDC | Not Tested | National Defence Complex; no verified public procurement domain |
 | C4I | Not Tested | No verified public procurement domain |
-| POF | Restricted | Every tested path returns a Cloudflare 403 challenge |
+| POF | Active | `pof.gov.pk` returns a Cloudflare 403 challenge and is not crawled; POF's own notices are collected from the public PPRA EPMS listing |
 | UNDP Pakistan | Restricted | Both notice hosts return `Disallow: /`; manual CSV/HTML import only |
 | PPPPRA | Active via Punjab eProcurement | Appears to mean Punjab PPRA; official notices collected there |
 
 Never crawled because access is forbidden: ADB (bot wall), NHA (robots
 403), KPT (robots fetch fails, tenders mirrored on EPADS), WAPDA RSS
 (endpoint dead). UNDP's parser is kept offline-only in
-`collector/adapters/undp.py` but deliberately not registered. POF is not
-registered because bypassing its bot challenge would violate the
-project's access policy.
+`collector/adapters/undp.py` but deliberately not registered. POF's own
+site is not fetched either (its challenge would have to be bypassed); the
+`pof` adapter instead keeps POF's rows from the PPRA EPMS listing it
+advertises on.
 
 **Policy:** public pages only, no auth/CAPTCHA bypass, robots.txt is
 authoritative, `CONTACT_EMAIL` in the User-Agent, sources whose terms

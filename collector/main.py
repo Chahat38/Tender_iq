@@ -42,6 +42,7 @@ from adapters.kppra import KppraActiveTendersAdapter  # noqa: E402
 from adapters.ndma import NdmaAdapter  # noqa: E402
 from adapters.pakrail import PakrailAdapter  # noqa: E402
 from adapters.pia import PiaAdapter  # noqa: E402
+from adapters.pof import PofAdapter  # noqa: E402
 from adapters.ppra_epms import PPRAEpmsAdapter  # noqa: E402
 from adapters.ptcl import PtclAdapter  # noqa: E402
 from adapters.punjab_eproc import PunjabEprocAdapter  # noqa: E402
@@ -70,6 +71,7 @@ ADAPTERS = {
     "punjab_eproc": PunjabEprocAdapter,
     "ptcl": PtclAdapter,
     "ndma": NdmaAdapter,
+    "pof": PofAdapter,
     "world_bank": WorldBankAdapter,
 }
 

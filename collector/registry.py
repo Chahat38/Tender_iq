@@ -199,6 +199,24 @@ SOURCE_REGISTRY: dict[str, SourceSpec] = {
         requires_authentication=False,
         crawl_frequency="daily",
     ),
+    "pof": SourceSpec(
+        key="pof",
+        source_name="POF Tenders",
+        base_url="https://epms.ppra.gov.pk",
+        adapter_type="PofAdapter",
+        active=True,
+        # Research 2026-11-06: pof.gov.pk itself answers HTTP 403 with
+        # ``Cf-Mitigated: challenge`` on every public path, so it is not
+        # crawled (no bot-challenge bypass). POF advertises its notices on
+        # the federal PPRA EPMS public portal as "Pakistan Ordnance
+        # Factories (POF)": public listing + detail pages, no login or
+        # CAPTCHA, and epms.ppra.gov.pk serves no robots.txt (404 -> no
+        # restrictions declared). Rows are kept only when the organization
+        # or title names the factories.
+        terms_checked=True,
+        requires_authentication=False,
+        crawl_frequency="every 6h",
+    ),
     "world_bank": SourceSpec(
         key="world_bank",
         source_name="World Bank Procurement Notices",
@@ -288,12 +306,13 @@ SOURCE_CATALOG: tuple[CoverageSpec, ...] = (
     CoverageSpec(
         key="pof",
         requested_name="POF",
-        source_name=None,
-        status="Restricted",
+        source_name="POF Tenders",
+        status="Active",
         url="https://pof.gov.pk/",
-        note="Every public path returns a Cloudflare 403 challenge. "
-        "TenderScout does not bypass bot challenges, so no adapter is "
-        "registered.",
+        note="pof.gov.pk answers a Cloudflare 403 challenge and is not "
+        "crawled; POF's own notices are collected from the public PPRA "
+        "EPMS listing, where the factories advertise as Pakistan Ordnance "
+        "Factories (POF).",
     ),
     CoverageSpec(
         key="ndma",

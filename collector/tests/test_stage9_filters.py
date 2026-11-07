@@ -307,3 +307,39 @@ class TestApiFilterEndpoints:
         endpoints = client.get("/").json()["endpoints"]
         assert "categories" in endpoints
         assert "provinces" in endpoints
+
+
+def test_source_filter_resolves_duplicate_groups(storage: Storage) -> None:
+    """A source whose notice another source reported first still lists it.
+
+    POF publishes on the federal portal; POF's own row is never the
+    group's representative, so filtering by the POF source must return
+    the group's row instead of an empty page.
+    """
+    first = storage.get_or_create_source("First Source", "first")
+    second = storage.get_or_create_source("Second Source", "second")
+    older = storage.upsert_opportunity(_opp(external_id="101"), first)
+    newer = storage.upsert_opportunity(_opp(external_id="202"), second)
+    assert older and newer
+
+    rows = storage.list_opportunities(primary_only=False)
+    by_external = {row["external_id"]: row["id"] for row in rows}
+    storage.update_duplicate_state(
+        by_external["202"],
+        duplicate_group_id="group-1",
+        is_primary=False,
+        source_count=2,
+    )
+    storage.update_duplicate_state(
+        by_external["101"],
+        duplicate_group_id="group-1",
+        is_primary=True,
+        source_count=2,
+    )
+
+    # Unfiltered view still shows the notice once.
+    assert storage.count_opportunities() == 1
+    # The second reporter now resolves to the group's single row.
+    assert storage.count_opportunities(source_id=second) == 1
+    listed = storage.list_opportunities(source_id=second)
+    assert [row["external_id"] for row in listed] == ["101"]

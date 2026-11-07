@@ -133,7 +133,7 @@ meant to run on a single box without infrastructure, and 429 +
 | UNDP Pakistan | skip (adapter kept unregistered) | Both `procurement-notices.undp.org/robots.txt` and the `public-components.undp.org` notice widget embedded by `www.undp.org/pakistan/procurement` are `Disallow: /`. The main `www.undp.org` page only links to those hosts and publishes no static notices. The parser exists in `collector/adapters/undp.py` and is tested offline, but the compliance gate forbids fetching it. Not wired into `ADAPTERS`/`SOURCE_REGISTRY` |
 | Zong | login-only | `zong.com.pk/procurement` is informational; the vendor portal requires registration/login and no public tender listing was found |
 | Jazz | login-only | `s2pservices.jazz.com.pk` is a login portal; the Jazz sitemap has no public tender listing |
-| POF | restricted | `pof.gov.pk`, `/tenders`, `/Tenders`, `/procurement` and `/tender-notices` all return HTTP 403 through a Cloudflare challenge. Bypassing it is forbidden, so no adapter is registered |
+| POF | collected via PPRA EPMS | Every public path on `pof.gov.pk` returns HTTP 403 with `Cf-Mitigated: challenge`, so the site itself is never fetched. POF does advertise its enquiries on the federal PPRA EPMS public portal as "Pakistan Ordnance Factories (POF)", so the `pof` adapter reads that keyword-filtered listing (rows kept only when the organization/title names the factories) and registers them under their own source |
 | NDC | not tested | Identified as National Defence Complex; no verified public procurement domain/page was found. Defence notices are published through DGDP/MoDP channels |
 | C4I | not tested | No verified public procurement domain/page was found; the organization cannot be tied to a crawlable public listing |
 | Asian Development Bank | skip | 403 bot wall (bypassing it = against terms) |
@@ -242,3 +242,31 @@ shows source health (last status, last successful crawl, tender count,
 consecutive failures, latest error) and a requested-source coverage
 grid; the opportunity filters continue to use the existing taxonomy
 APIs. No table or field names were renamed underneath the frontend.
+
+## Source filtering and duplicate groups (2026-11-07)
+
+A tender found on several sources is stored once per source and deduplicated
+by `dedup.py`; the group's *primary* row is the source that saw it first.
+Filtering the API by a source used to return only that source's primary rows,
+which hid every notice a source always reports second - POF's enquiries also
+sit on the federal portal, so "POF Tenders" listed nothing. `source_id` now
+resolves through the duplicate group (`is_primary AND (source_id = ? OR
+duplicate_group_id IN (...))`), so a source filter shows exactly its notices,
+one row each, and the count matches the Sources page.
+
+Three dedup defects surfaced while wiring POF, all fixed in `dedup.py` /
+`storage.py`:
+
+* **Re-used headlines fused unrelated tenders.** POF advertises dozens of
+  enquiries under the single title "PAKISTAN ORDNANCE FACTORIES POF SANJWAL".
+  Identical title + organization scored 0.85 (the auto-merge threshold) even
+  with deadlines weeks apart. Two different agency reference numbers now
+  never match, and dated deadlines more than
+  `REF_DEADLINE_WINDOW_DAYS` apart never match either.
+* **Chained merges orphaned group members.** `merge_pair` read group ids from
+  the pass's opening snapshot, so a row merged twice in one run left its
+  previous group behind without a primary. It re-reads both rows first.
+* **Pruning could leave a group with no primary**, hiding its remaining
+  duplicates from the deduped view. `Storage.repair_duplicate_groups()` runs
+  after `prune_expired()`: single-member groups are ungrouped, a group that
+  lost its primary promotes its oldest member, and `source_count` is refreshed.

@@ -134,6 +134,21 @@ def score_pair(a: dict[str, Any], b: dict[str, Any]) -> tuple[float, str]:
         if day_gap is None or day_gap <= REF_DEADLINE_WINDOW_DAYS:
             return 1.0, f"exact reference match ({ref_a})"
 
+    if ref_a and ref_b and ref_a != ref_b:
+        # Two different agency reference numbers are two different
+        # tenders no matter how alike the headline is: POF re-uses
+        # "PAKISTAN ORDNANCE FACTORIES POF SANJWAL" for dozens of
+        # enquiries that only their inquiry number tells apart.
+        return 0.0, ""
+
+    day_gap = _day_gap(a.get("deadline"), b.get("deadline"))
+    if day_gap is not None and day_gap > REF_DEADLINE_WINDOW_DAYS:
+        # Two dated deadlines more than a month apart are different
+        # tenders even when title and organization are identical: POF (and
+        # other agencies) re-use one headline for many enquiries, so a
+        # title-only match must not fuse them.
+        return 0.0, ""
+
     title = title_similarity(a.get("title"), b.get("title"))
     if title == 0.0:
         return 0.0, ""
@@ -213,6 +228,20 @@ def merge_pair(storage: Any, a: dict[str, Any], b: dict[str, Any]) -> str | None
     grouped (join), two different groups (union - the older row's group
     wins). Returns the group id, or None when they already share one.
     """
+    group_a = a.get("duplicate_group_id")
+    group_b = b.get("duplicate_group_id")
+    if group_a and group_a == group_b:
+        return None
+
+    # Re-read both rows: the caller's dicts come from the pass's opening
+    # snapshot and may already have moved into another group during this
+    # run. Merging on stale group ids would move a row out of its group
+    # and orphan the members it left behind.
+    fresh_a = storage.get_opportunity(int(a["id"]))
+    fresh_b = storage.get_opportunity(int(b["id"]))
+    if fresh_a is None or fresh_b is None:
+        return None  # one side was pruned since the scan
+    a, b = fresh_a, fresh_b
     group_a = a.get("duplicate_group_id")
     group_b = b.get("duplicate_group_id")
     if group_a and group_a == group_b:

@@ -306,3 +306,79 @@ class TestCli:
         out = capsys.readouterr().out
         assert code == 0
         assert out.startswith("Dedup:")
+
+
+class TestRepeatedTitles:
+    def test_same_title_far_deadlines_are_different_tenders(self) -> None:
+        """POF re-uses one headline for many enquiries (P1/2026, P2/2026...)."""
+        a = {
+            "reference_number": None,
+            "title": "PAKISTAN ORDNANCE FACTORIES POF SANJWAL",
+            "organization": "Pakistan Ordnance Factories (POF)",
+            "deadline": DEADLINE,
+        }
+        b = dict(a, deadline=DEADLINE + 35 * DAY)
+        score, _ = dedup.score_pair(a, b)
+        assert score == 0.0
+
+
+class TestChainedMerges:
+    def test_chained_merge_keeps_every_member_in_one_group(self, storage) -> None:
+        """A row that moves groups must not orphan its previous group."""
+        s1, s2, s3 = (add_source(storage, name) for name in "ABC")
+        ids = [
+            add_opp(storage, s1, "a", reference_number="R-1", title="Tender"),
+            add_opp(storage, s2, "b", reference_number="R-1", title="Tender"),
+            add_opp(storage, s3, "c", reference_number="R-1", title="Tender"),
+        ]
+        dedup.run(storage)
+        rows = [storage.get_opportunity(i) for i in ids]
+        groups = {row["duplicate_group_id"] for row in rows}
+        assert None not in groups
+        assert len(groups) == 1, f"members spread over groups: {groups}"
+        assert sum(1 for row in rows if row["is_primary"]) == 1
+        assert all(row["source_count"] == 3 for row in rows)
+
+
+class TestRepairDuplicateGroups:
+    def test_group_without_a_primary_promotes_the_oldest_member(
+        self, storage
+    ) -> None:
+        s1, s2 = add_source(storage, "One"), add_source(storage, "Two")
+        a = add_opp(storage, s1, "a", title="Tender A")
+        b = add_opp(storage, s2, "b", title="Tender B")
+        for opportunity_id in (a, b):
+            storage.update_duplicate_state(
+                opportunity_id,
+                duplicate_group_id="group-1",
+                is_primary=False,
+                source_count=2,
+            )
+        assert storage.repair_duplicate_groups() >= 1
+        rows = storage.list_opportunities_in_group("group-1")
+        assert sum(1 for row in rows if row["is_primary"]) == 1
+
+    def test_single_member_group_is_ungrouped(self, storage) -> None:
+        s1 = add_source(storage, "One")
+        a = add_opp(storage, s1, "a", title="Tender A")
+        storage.update_duplicate_state(
+            a, duplicate_group_id="group-1", is_primary=False, source_count=2
+        )
+        storage.repair_duplicate_groups()
+        row = storage.get_opportunity(a)
+        assert row["duplicate_group_id"] is None
+        assert row["is_primary"] == 1
+        assert row["source_count"] == 1
+        assert storage.count_opportunities() == 1
+
+
+class TestDifferentReferences:
+    def test_different_reference_numbers_are_never_the_same_tender(self) -> None:
+        a = {
+            "reference_number": "0260/LP/P-782/Sjl/57",
+            "title": "PAKISTAN ORDNANCE FACTORIES POF SANJWAL",
+            "organization": "Pakistan Ordnance Factories (POF)",
+            "deadline": DEADLINE,
+        }
+        b = dict(a, reference_number="0207/LP/SJL/57")
+        assert dedup.score_pair(a, b)[0] == 0.0
