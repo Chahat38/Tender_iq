@@ -16,6 +16,7 @@ for.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -37,6 +38,11 @@ class SourceSpec:
     terms_checked: bool = False
     requires_authentication: bool = False
     crawl_frequency: str = "every 6h"
+    #: "government" for a public procurement authority/portal, or
+    #: "corporate" for a state-owned commercial enterprise that publishes
+    #: its own tender page (PIA, PTCL, Pakistan Railways, POF). Drives the
+    #: Government/Corporate source filter.
+    source_kind: str = "government"
 
 
 #: Keys match ``main.ADAPTERS``. Facts are entered from the research in
@@ -104,6 +110,7 @@ SOURCE_REGISTRY: dict[str, SourceSpec] = {
         source_name="PIA Tenders",
         base_url="https://piac.com.pk",
         adapter_type="PiaAdapter",
+        source_kind="corporate",
         active=True,
         # Research 2026-10: public /corporate/business-with-pia/tenders
         # table, no login/CAPTCHA, no pagination; robots.txt is the
@@ -118,6 +125,7 @@ SOURCE_REGISTRY: dict[str, SourceSpec] = {
         source_name="Pakistan Railways",
         base_url="https://www.pakrail.gov.pk",
         adapter_type="PakrailAdapter",
+        source_kind="corporate",
         active=True,
         # Research 2026-10: public /Tenders/index.aspx archive, no
         # login/CAPTCHA; robots.txt 404 -> no restrictions declared,
@@ -177,6 +185,7 @@ SOURCE_REGISTRY: dict[str, SourceSpec] = {
         source_name="PTCL Tenders",
         base_url="https://ptcl.com.pk",
         adapter_type="PtclAdapter",
+        source_kind="corporate",
         active=True,
         # Research 2026-10-25: public /Tenders accordion, no login or
         # CAPTCHA; robots.txt is allow-all for the tenders path; detail
@@ -204,6 +213,7 @@ SOURCE_REGISTRY: dict[str, SourceSpec] = {
         source_name="POF Tenders",
         base_url="https://epms.ppra.gov.pk",
         adapter_type="PofAdapter",
+        source_kind="corporate",
         active=True,
         # Research 2026-11-06: pof.gov.pk itself answers HTTP 403 with
         # ``Cf-Mitigated: challenge`` on every public path, so it is not
@@ -367,6 +377,24 @@ SOURCE_CATALOG: tuple[CoverageSpec, ...] = (
         note="Already integrated through the PPRA EPMS public pages.",
     ),
 )
+
+
+#: Values the Government/Corporate source filter accepts, in display order.
+SOURCE_KINDS: tuple[str, ...] = ("government", "corporate")
+
+
+def adapter_types_for_kinds(kinds: Iterable[str]) -> set[str]:
+    """Adapter types whose registered source belongs to one of ``kinds``.
+
+    Retirement-proof against source names changing: the database row and
+    the registry spec share ``adapter_type`` (see tests/test_wiring.py).
+    """
+    wanted = {kind.strip().lower() for kind in kinds}
+    return {
+        spec.adapter_type
+        for spec in SOURCE_REGISTRY.values()
+        if spec.source_kind in wanted
+    }
 
 
 def spec_for(adapter_key: str) -> SourceSpec | None:

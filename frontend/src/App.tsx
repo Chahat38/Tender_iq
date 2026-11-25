@@ -1,13 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   ApiError,
-  listCategories,
-  listDepartments,
-  listLocations,
+  getFacets,
+  isAbortError,
   listOpportunities,
-  listProcurementTypes,
-  listProvinces,
-  listSectors,
   listSources,
   searchOpportunities,
 } from "./api";
@@ -105,6 +101,7 @@ function hitToRow(hit: SearchHit): TableRow {
 export default function App() {
   const [route, setRoute] = useState<Route>(() => parseHash(window.location.hash));
   const [sources, setSources] = useState<Source[]>([]);
+  const [portalIds, setPortalIds] = useState<number[]>([]);
   const [locations, setLocations] = useState<string[]>([]);
   const [categories, setCategories] = useState<string[]>([]);
   const [provinces, setProvinces] = useState<string[]>([]);
@@ -141,33 +138,72 @@ export default function App() {
     navigate(`#/tender/${id}`);
   }
 
-  // Facets are optional chrome: if a facet endpoint fails, browsing still
-  // works (the main data effect surfaces real API errors).
+  // The portal list also credits the sources in the footer, so it loads
+  // once; the filter options themselves follow the facets below.
   useEffect(() => {
     const controller = new AbortController();
     listSources(controller.signal)
       .then(setSources)
-      .catch(() => setSources([]));
-    listLocations(controller.signal)
-      .then(setLocations)
-      .catch(() => setLocations([]));
-    listCategories(controller.signal)
-      .then(setCategories)
-      .catch(() => setCategories([]));
-    listProvinces(controller.signal)
-      .then(setProvinces)
-      .catch(() => setProvinces([]));
-    listSectors(controller.signal)
-      .then(setSectors)
-      .catch(() => setSectors([]));
-    listDepartments(controller.signal)
-      .then(setDepartments)
-      .catch(() => setDepartments([]));
-    listProcurementTypes(controller.signal)
-      .then(setProcurementTypes)
-      .catch(() => setProcurementTypes([]));
+      .catch((error: unknown) => {
+        if (controller.signal.aborted || isAbortError(error)) {
+          return;
+        }
+        setSources([]);
+      });
     return () => controller.abort();
   }, []);
+
+  // Every dropdown offers only values that still match the other active
+  // filters, so any combination the user builds has tenders behind it.
+  // Each facet ignores its own filter, keeping the current choice valid.
+  useEffect(() => {
+    const controller = new AbortController();
+    getFacets(
+      {
+        sourceKinds: filters.sourceKinds,
+        sourceId: filters.sourceId ?? undefined,
+        location: filters.location || undefined,
+        category: filters.category || undefined,
+        province: filters.province || undefined,
+        sector: filters.sector || undefined,
+        department: filters.department || undefined,
+        procurementType: filters.procurementType || undefined,
+        deadlineFrom: filters.deadlineFrom || undefined,
+        deadlineTo: filters.deadlineTo || undefined,
+        includeDuplicates: filters.includeDuplicates || undefined,
+      },
+      controller.signal,
+    )
+      .then((next) => {
+        setLocations(next.locations);
+        setCategories(next.categories);
+        setProvinces(next.provinces);
+        setSectors(next.sectors);
+        setDepartments(next.departments);
+        setProcurementTypes(next.procurement_types);
+        setPortalIds(next.source_ids);
+      })
+      .catch((error: unknown) => {
+        if (controller.signal.aborted || isAbortError(error)) {
+          return;
+        }
+        // Keep the options already on screen: a failed facet refresh must
+        // not empty every dropdown.
+      });
+    return () => controller.abort();
+  }, [
+    filters.sourceKinds,
+    filters.sourceId,
+    filters.location,
+    filters.category,
+    filters.province,
+    filters.sector,
+    filters.department,
+    filters.procurementType,
+    filters.deadlineFrom,
+    filters.deadlineTo,
+    filters.includeDuplicates,
+  ]);
 
   useEffect(() => {
     if (route.page !== "tenders") {
@@ -187,6 +223,8 @@ export default function App() {
       : listOpportunities(
           {
             ...params,
+            sourceKinds:
+              filters.sourceKinds.length > 0 ? filters.sourceKinds : undefined,
             sourceId: filters.sourceId ?? undefined,
             location: filters.location || undefined,
             category: filters.category || undefined,
@@ -206,7 +244,7 @@ export default function App() {
         });
     load
       .catch((err: unknown) => {
-        if (controller.signal.aborted) {
+        if (controller.signal.aborted || isAbortError(err)) {
           return;
         }
         setRows([]);
@@ -230,7 +268,10 @@ export default function App() {
   }, [route.page, searchQuery, offset, filters]);
 
   function handleFiltersChange(next: FilterValues) {
-    setFilters(next);
+    // Changing the province clears the city: it may not exist there.
+    setFilters(
+      next.province !== filters.province ? { ...next, location: "" } : next,
+    );
     setOffset(0);
   }
 
@@ -245,6 +286,18 @@ export default function App() {
     setSearchQuery("");
     setOffset(0);
   }
+
+  // Only portals with a matching tender stay on offer; the current
+  // selection is always kept so the dropdown never blanks out.
+  const portalOptions = useMemo(() => {
+    if (portalIds.length === 0) {
+      return sources;
+    }
+    const available = new Set(portalIds);
+    return sources.filter(
+      (source) => available.has(source.id) || source.id === filters.sourceId,
+    );
+  }, [sources, portalIds, filters.sourceId]);
 
   // The vocabulary the search box predicts from: every browse facet plus
   // the source names, de-duplicated. Built once per facet load so typing
@@ -358,7 +411,7 @@ export default function App() {
             <div className="mt-4">
               <FilterBar
                 values={filters}
-                sources={sources}
+                sources={portalOptions}
                 locations={locations}
                 categories={categories}
                 provinces={provinces}

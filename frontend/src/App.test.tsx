@@ -24,15 +24,12 @@ vi.mock("./api", () => ({
       this.detail = detail;
     }
   },
+  isAbortError: (error: unknown) =>
+    error instanceof Error && error.name === "AbortError",
   listOpportunities: vi.fn(),
   listSources: vi.fn(),
   listCoverage: vi.fn(),
-  listLocations: vi.fn(),
-  listCategories: vi.fn(),
-  listProvinces: vi.fn(),
-  listSectors: vi.fn(),
-  listDepartments: vi.fn(),
-  listProcurementTypes: vi.fn(),
+  getFacets: vi.fn(),
   getOpportunity: vi.fn(),
   getDuplicates: vi.fn(),
   getNotifications: vi.fn(),
@@ -46,12 +43,7 @@ import * as api from "./api";
 const mockedList = vi.mocked(api.listOpportunities);
 const mockedListSources = vi.mocked(api.listSources);
 const mockedListCoverage = vi.mocked(api.listCoverage);
-const mockedLocations = vi.mocked(api.listLocations);
-const mockedCategories = vi.mocked(api.listCategories);
-const mockedProvinces = vi.mocked(api.listProvinces);
-const mockedSectors = vi.mocked(api.listSectors);
-const mockedDepartments = vi.mocked(api.listDepartments);
-const mockedProcurementTypes = vi.mocked(api.listProcurementTypes);
+const mockedFacets = vi.mocked(api.getFacets);
 const mockedSearch = vi.mocked(api.searchOpportunities);
 const mockedGet = vi.mocked(api.getOpportunity);
 const mockedGetDuplicates = vi.mocked(api.getDuplicates);
@@ -189,6 +181,7 @@ const analysis: AiAnalysis = {
 const defaultBrowseParams = {
   limit: 20,
   offset: 0,
+  sourceKinds: undefined,
   sourceId: undefined,
   location: undefined,
   category: undefined,
@@ -208,12 +201,15 @@ beforeEach(() => {
   mockedList.mockResolvedValue(page);
   mockedListSources.mockResolvedValue(sources);
   mockedListCoverage.mockResolvedValue([]);
-  mockedLocations.mockResolvedValue(["karachi, pakistan", "lahore, pakistan"]);
-  mockedCategories.mockResolvedValue([]);
-  mockedProvinces.mockResolvedValue([]);
-  mockedSectors.mockResolvedValue([]);
-  mockedDepartments.mockResolvedValue([]);
-  mockedProcurementTypes.mockResolvedValue(["goods", "works", "services"]);
+  mockedFacets.mockResolvedValue({
+    provinces: ["Punjab", "Sindh"],
+    locations: ["Karachi", "Lahore"],
+    categories: [],
+    sectors: [],
+    departments: [],
+    procurement_types: ["goods", "works", "services"],
+    source_ids: [1],
+  });
   mockedSearch.mockResolvedValue(searchPage);
   mockedGetDuplicates.mockResolvedValue([]);
   mockedNotifications.mockResolvedValue(notifications);
@@ -248,25 +244,57 @@ describe("App browse mode", () => {
     ).toBeInTheDocument();
   });
 
-  it("filters by city in browse mode", async () => {
+  it("filters by city through the searchable dropdown", async () => {
     render(<App />);
     await screen.findByText(
       "Re-tender for Maintenance Store Items SZHL FY 2026-27",
     );
-    fireEvent.change(screen.getByLabelText("Filter by city"), {
-      target: { value: "karachi, pakistan" },
-    });
+    const city = screen.getByLabelText("Filter by city");
+    fireEvent.focus(city);
+    fireEvent.change(city, { target: { value: "kar" } });
+    fireEvent.click(
+      await screen.findByRole("option", { name: "Karachi" }),
+    );
     await waitFor(() =>
       expect(mockedList).toHaveBeenLastCalledWith(
-        { ...defaultBrowseParams, location: "karachi, pakistan" },
+        { ...defaultBrowseParams, location: "Karachi" },
+        expect.anything(),
+      ),
+    );
+  });
+
+  it("narrows the facet options when the province changes", async () => {
+    render(<App />);
+    await screen.findByText(
+      "Re-tender for Maintenance Store Items SZHL FY 2026-27",
+    );
+    fireEvent.change(screen.getByLabelText("Filter by province"), {
+      target: { value: "Sindh" },
+    });
+    await waitFor(() =>
+      expect(mockedFacets).toHaveBeenLastCalledWith(
+        expect.objectContaining({ province: "Sindh" }),
+        expect.anything(),
+      ),
+    );
+    await waitFor(() =>
+      expect(mockedList).toHaveBeenLastCalledWith(
+        { ...defaultBrowseParams, province: "Sindh" },
         expect.anything(),
       ),
     );
   });
 
   it("filters by industry and department in browse mode", async () => {
-    mockedSectors.mockResolvedValue(["it & telecom"]);
-    mockedDepartments.mockResolvedValue(["information technology"]);
+    mockedFacets.mockResolvedValue({
+      provinces: [],
+      locations: [],
+      categories: [],
+      sectors: ["it & telecom"],
+      departments: ["information technology"],
+      procurement_types: [],
+      source_ids: [1],
+    });
     render(<App />);
     await screen.findByText(
       "Re-tender for Maintenance Store Items SZHL FY 2026-27",
@@ -351,12 +379,38 @@ describe("App browse mode", () => {
     );
   });
 
-  it("filters by source in browse mode", async () => {
+  it("filters by source family, one or both", async () => {
     render(<App />);
     await screen.findByText(
       "Re-tender for Maintenance Store Items SZHL FY 2026-27",
     );
-    fireEvent.change(screen.getByLabelText("Filter by source"), {
+    fireEvent.click(screen.getByLabelText("Filter by source"));
+    fireEvent.click(screen.getByLabelText("Government"));
+    await waitFor(() =>
+      expect(mockedList).toHaveBeenLastCalledWith(
+        { ...defaultBrowseParams, sourceKinds: ["government"] },
+        expect.anything(),
+      ),
+    );
+
+    fireEvent.click(screen.getByLabelText("Corporate"));
+    await waitFor(() =>
+      expect(mockedList).toHaveBeenLastCalledWith(
+        {
+          ...defaultBrowseParams,
+          sourceKinds: ["government", "corporate"],
+        },
+        expect.anything(),
+      ),
+    );
+  });
+
+  it("filters by one portal", async () => {
+    render(<App />);
+    await screen.findByText(
+      "Re-tender for Maintenance Store Items SZHL FY 2026-27",
+    );
+    fireEvent.change(screen.getByLabelText("Filter by portal"), {
       target: { value: "1" },
     });
     await waitFor(() =>

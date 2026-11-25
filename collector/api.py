@@ -20,6 +20,8 @@ Endpoints:
 * ``GET /provinces`` -- distinct provinces for the province filter,
 * ``GET /procurement_types`` -- distinct procurement types for the
   filter,
+* ``GET /facets`` -- every filter's options under the other active
+  filters, so the UI never offers an impossible combination,
 * ``GET /opportunities`` -- newest-first page of opportunities
   (non-duplicate rows by default; ``sort`` can page by closing deadline),
 * ``POST /opportunities/query`` -- same, with a JSON body for
@@ -80,12 +82,13 @@ if str(_SCRIPT_DIR) not in sys.path:
 
 import ai_endpoints  # noqa: E402
 from ai import Analysis, analyze  # noqa: E402
-from registry import SOURCE_CATALOG  # noqa: E402
+from registry import SOURCE_CATALOG, SOURCE_REGISTRY  # noqa: E402
 from search import SearchIndex  # noqa: E402
 from storage import NULL_DEADLINE_FILTER, Storage  # noqa: E402
 from storage_postgres import PostgresStorage  # noqa: E402
 from taxonomy import (  # noqa: E402
     all_cities,
+    cities_for_province,
     find_city,
     normalize_province,
     provinces_for_filter,
@@ -325,6 +328,18 @@ class MatchOut(BaseModel):
         return list(value or [])
 
 
+class FacetsOut(BaseModel):
+    """Filter options that still have matches under the other filters."""
+
+    provinces: list[str]
+    locations: list[str]
+    categories: list[str]
+    sectors: list[str]
+    departments: list[str]
+    procurement_types: list[str]
+    source_ids: list[int]
+
+
 class OpportunityPage(BaseModel):
     """One page of opportunities with paging metadata."""
 
@@ -379,6 +394,12 @@ class OpportunityFilter(BaseModel):
     limit: int = Field(20, ge=0, le=_API_LIMIT_MAX)
     offset: int = Field(0, ge=0)
     source_id: int | None = Field(None, ge=1)
+    source_kind: list[Literal["government", "corporate"]] = Field(
+        default_factory=list,
+        description="Only sources of these kinds: government portals or "
+        "state-owned enterprises publishing their own tenders. Empty "
+        "means every source.",
+    )
     location: str | None = Field(
         None,
         max_length=120,
@@ -632,6 +653,28 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
                     app.state.storage = storage
         return storage
 
+    def _source_ids_for_kinds(kinds: list[str] | None) -> list[int] | None:
+        """Source ids whose registry kind is one of ``kinds``.
+
+        ``None`` (no filter) stays ``None``; a list that matches no
+        registered source returns ``[]``, which the storage layer turns
+        into "no rows" instead of silently ignoring the filter.
+        """
+        if not kinds:
+            return None
+        wanted = set(kinds)
+        adapter_types = {
+            spec.adapter_type
+            for spec in SOURCE_REGISTRY.values()
+            if spec.source_kind in wanted
+        }
+        rows = _get_storage().list_sources()
+        return [
+            int(row["id"])
+            for row in rows
+            if row.get("adapter_type") in adapter_types
+        ]
+
     def _get_index() -> SearchIndex:
         """Return the shared FTS5 index, creating it on first use.
 
@@ -655,6 +698,7 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
         limit: int,
         offset: int,
         source_id: int | None,
+        source_ids: list[int] | None = None,
         location: str | None,
         deadline_before: datetime | None,
         deadline_after: Any,
@@ -677,6 +721,7 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
                 limit=limit,
                 offset=offset,
                 source_id=source_id,
+                source_ids=source_ids,
                 location=location,
                 deadline_before=deadline_before,
                 deadline_after=deadline_after,
@@ -694,6 +739,7 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
             )
             total = storage.count_opportunities(
                 source_id=source_id,
+                source_ids=source_ids,
                 location=location,
                 deadline_before=deadline_before,
                 deadline_after=deadline_after,
@@ -741,6 +787,7 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
                 "procurement_types": "/procurement_types",
                 "sectors": "/sectors",
                 "departments": "/departments",
+                "facets": "/facets",
                 "opportunities": "/opportunities",
                 "opportunity_query": "POST /opportunities/query",
                 "opportunity": "/opportunities/{opportunity_id}",
@@ -837,6 +884,13 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
         ),
         offset: int = Query(0, ge=0),
         source_id: int | None = Query(None, ge=1),
+        source_kind: list[Literal["government", "corporate"]] | None = Query(
+            None,
+            description="Only tenders whose source is a government portal "
+            "('government') or a state-owned enterprise publishing its own "
+            "tenders ('corporate'). Repeat the parameter to include both; "
+            "omitted means every source.",
+        ),
         location: str | None = Query(
             None,
             max_length=120,
@@ -937,6 +991,7 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
             procurement_type=procurement_type,
             sort=sort,
             include_duplicates=include_duplicates,
+            source_ids=_source_ids_for_kinds(source_kind),
             exclude_expired=(
                 datetime.now(timezone.utc)
                 if (deadline_after is None
@@ -948,7 +1003,15 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
         )
 
     @app.get("/locations", response_model=list[str], tags=["opportunities"])
-    def list_locations(include_all: bool = False) -> list[str]:
+    def list_locations(
+        include_all: bool = False,
+        province: str | None = Query(
+            None,
+            max_length=60,
+            description="Only cities in this province (use /provinces for "
+            "valid values); omitted means every province.",
+        ),
+    ) -> list[str]:
         """City filter facet.
 
         By default: distinct location strings currently in the database
@@ -958,17 +1021,42 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
         """
         with data_lock:
             stored = _get_storage().list_distinct_locations()
-        if not include_all:
-            return stored
-        merged: dict[str, str] = {
-            city.lower(): city for city in all_cities()
+        if not province:
+            if not include_all:
+                return stored
+            merged: dict[str, str] = {
+                city.lower(): city for city in all_cities()
+            }
+            for value in stored:
+                # Stored locations are free text ("karachi, pakistan"); fold
+                # each one onto the canonical city name so the dropdown does
+                # not list the same city twice under different spellings.
+                city = find_city(value)
+                if city:
+                    merged.setdefault(city.lower(), city)
+            return sorted(merged.values(), key=str.lower)
+
+        canonical = normalize_province(province)
+        if canonical is None:
+            # An unrecognised province cannot own any city; answering the
+            # whole country would contradict the province filter.
+            return []
+        in_province = {
+            city.lower() for city in cities_for_province(canonical)
         }
+        if not include_all:
+            # Raw stored values that belong to the province (the value the
+            # city filter will send back, unchanged).
+            return [
+                value
+                for value in stored
+                if (find_city(value) or "").lower() in in_province
+                or normalize_province(value) == canonical
+            ]
+        merged = {city.lower(): city for city in cities_for_province(canonical)}
         for value in stored:
-            # Stored locations are free text ("karachi, pakistan"); fold
-            # each one onto the canonical city name so the dropdown does
-            # not list the same city twice under different spellings.
             city = find_city(value)
-            if city:
+            if city and city.lower() in in_province:
                 merged.setdefault(city.lower(), city)
         return sorted(merged.values(), key=str.lower)
 
@@ -1026,6 +1114,75 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
         with data_lock:
             return _get_storage().list_distinct_procurement_types()
 
+    @app.get("/facets", response_model=FacetsOut, tags=["opportunities"])
+    def facets(
+        source_id: int | None = Query(None, ge=1),
+        source_kind: list[Literal["government", "corporate"]] | None = Query(
+            None,
+            description="Restrict the facet options to one source family; "
+            "repeat to include both.",
+        ),
+        location: str | None = Query(None, max_length=120),
+        category: str | None = Query(None, max_length=120),
+        province: str | None = Query(None, max_length=60),
+        sector: str | None = Query(None, max_length=80),
+        department: str | None = Query(None, max_length=80),
+        procurement_type: str | None = Query(None, max_length=80),
+        deadline_from: str | None = Query(None, pattern=r"^\d{4}-\d{2}-\d{2}$"),
+        deadline_to: str | None = Query(None, pattern=r"^\d{4}-\d{2}-\d{2}$"),
+        include_duplicates: bool = Query(False),
+    ) -> FacetsOut:
+        """Filter options that still have matches under the other filters.
+
+        Each list leaves its own filter out (so the current choice stays
+        selectable) and applies every other filter ``GET /opportunities``
+        would apply, including the live-only default. The UI feeds these
+        lists to its dropdowns, so every combination a user can build
+        returns at least one tender.
+        """
+        source_ids = _source_ids_for_kinds(source_kind)
+        exclude_expired = (
+            datetime.now(timezone.utc)
+            if deadline_from is None and deadline_to is None
+            else None
+        )
+        with data_lock:
+            raw = _get_storage().list_facets(
+                source_id=source_id,
+                source_ids=source_ids,
+                location=location,
+                category=category,
+                province=province,
+                sector=sector,
+                department=department,
+                procurement_type=procurement_type,
+                deadline_from=deadline_from,
+                deadline_to=deadline_to,
+                primary_only=not include_duplicates,
+                exclude_expired=exclude_expired,
+            )
+        # Province and city facets are stored as free text; answer the
+        # canonical spellings the filter accepts back, without duplicates.
+        provinces: list[str] = []
+        for value in raw["provinces"]:
+            name = normalize_province(value) or value.title()
+            if name not in provinces:
+                provinces.append(name)
+        locations: list[str] = []
+        for value in raw["locations"]:
+            name = find_city(value) or value
+            if name not in locations:
+                locations.append(name)
+        return FacetsOut(
+            provinces=sorted(provinces, key=str.lower),
+            locations=sorted(locations, key=str.lower),
+            categories=raw["categories"],
+            sectors=raw["sectors"],
+            departments=raw["departments"],
+            procurement_types=raw["procurement_types"],
+            source_ids=raw["source_ids"],
+        )
+
     @app.post(
         "/opportunities/query",
         response_model=OpportunityPage,
@@ -1060,6 +1217,7 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
             procurement_type=body.procurement_type,
             sort=body.sort,
             include_duplicates=body.include_duplicates,
+            source_ids=_source_ids_for_kinds(body.source_kind),
         )
 
     @app.get(

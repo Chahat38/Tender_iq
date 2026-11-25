@@ -1,10 +1,13 @@
-import type { ChangeEvent } from "react";
+import { useEffect, useRef, useState, type ChangeEvent } from "react";
+import type { SourceKind } from "../api";
+import { SearchableSelect } from "./SearchableSelect";
 
 /**
- * All browse-mode filters in one bar: source, city, category, province,
- * department, procurement type and industry (the stored sector
- * vocabulary) plus a deadline date range, an order switch (newest /
- * closing soon) and a toggle that reveals mirrored duplicate listings.
+ * All browse-mode filters in one bar: source family (government or
+ * corporate), one portal, city, category, province, industry (the
+ * stored sector vocabulary), department and procurement type plus a
+ * deadline date range, an order switch (newest / closing soon) and a
+ * toggle that reveals mirrored duplicate listings.
  * Values the user picks are opaque strings sent straight to the API;
  * scraped facet values are never parsed by the UI. The deadline range
  * sends date-only strings; the API compares the stored ISO date's first
@@ -14,6 +17,8 @@ import type { ChangeEvent } from "react";
 export type SortValue = "newest" | "closing";
 
 export interface FilterValues {
+  /** Source family: government portals and/or corporate sources. */
+  sourceKinds: SourceKind[];
   sourceId: number | null;
   location: string;
   category: string;
@@ -32,6 +37,7 @@ export interface FilterValues {
 }
 
 export const EMPTY_FILTERS: FilterValues = {
+  sourceKinds: [],
   sourceId: null,
   location: "",
   category: "",
@@ -47,6 +53,7 @@ export const EMPTY_FILTERS: FilterValues = {
 
 export function filtersAreDefault(filters: FilterValues): boolean {
   return (
+    filters.sourceKinds.length === 0 &&
     filters.sourceId === null &&
     filters.location === "" &&
     filters.category === "" &&
@@ -63,6 +70,7 @@ export function filtersAreDefault(filters: FilterValues): boolean {
 
 function activeFilterCount(filters: FilterValues): number {
   let count = 0;
+  if (filters.sourceKinds.length > 0) count += 1;
   if (filters.sourceId !== null) count += 1;
   if (filters.location) count += 1;
   if (filters.category) count += 1;
@@ -129,6 +137,16 @@ function facetLabel(value: string): string {
     .join(" ");
 }
 
+/**
+ * Keep the current choice listed even when its facet no longer offers it,
+ * so narrowing the options never blanks out an active filter.
+ */
+function withSelected(options: string[], selected: string): string[] {
+  return selected !== "" && !options.includes(selected)
+    ? [selected, ...options]
+    : options;
+}
+
 function FieldLabel({ children }: { children: string }) {
   return (
     <span className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-slate-500">
@@ -145,6 +163,128 @@ function change<T extends HTMLSelectElement | HTMLInputElement>(
   return (event) => {
     props.onChange({ ...props.values, [key]: transform(event) });
   };
+}
+
+/** The two source families, in display order. */
+const SOURCE_KIND_OPTIONS: { value: SourceKind; label: string }[] = [
+  { value: "government", label: "Government" },
+  { value: "corporate", label: "Corporate" },
+];
+
+/**
+ * Government/Corporate multi-select: a dropdown holding two checkboxes,
+ * so the user can pick either family or both. Picking neither means
+ * "all sources" (the same thing as picking both today, but the empty
+ * state keeps the filter visibly inactive).
+ */
+function SourceKindSelect({
+  values,
+  disabled,
+  onChange,
+}: {
+  values: SourceKind[];
+  disabled: boolean;
+  onChange: (next: SourceKind[]) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+    function onPointerDown(event: MouseEvent) {
+      if (
+        containerRef.current &&
+        !containerRef.current.contains(event.target as Node)
+      ) {
+        setOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", onPointerDown);
+    return () => document.removeEventListener("mousedown", onPointerDown);
+  }, [open]);
+
+  const selected = SOURCE_KIND_OPTIONS.filter((option) =>
+    values.includes(option.value),
+  );
+  const summary =
+    selected.length === 0
+      ? "All sources"
+      : selected.map((option) => option.label).join(", ");
+
+  function toggle(kind: SourceKind) {
+    const next = values.includes(kind)
+      ? values.filter((value) => value !== kind)
+      : [...values, kind];
+    // Keep a stable order so the query string does not churn.
+    onChange(
+      SOURCE_KIND_OPTIONS.map((option) => option.value).filter((value) =>
+        next.includes(value),
+      ),
+    );
+  }
+
+  return (
+    <div ref={containerRef} className="relative">
+      <button
+        type="button"
+        aria-label="Filter by source"
+        aria-expanded={open}
+        aria-haspopup="listbox"
+        onClick={() => setOpen((current) => !current)}
+        disabled={disabled}
+        className={`${FIELD_CLASS} flex items-center justify-between gap-2 text-left`}
+      >
+        <span className="truncate">{summary}</span>
+        <svg
+          viewBox="0 0 24 24"
+          className="h-3.5 w-3.5 shrink-0 text-slate-500"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2.2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          aria-hidden="true"
+        >
+          <path d="m6 9 6 6 6-6" />
+        </svg>
+      </button>
+      {open ? (
+        <div
+          role="group"
+          aria-label="Source options"
+          className="absolute left-0 right-0 top-full z-30 mt-1 rounded-lg border border-slate-700 bg-slate-900 p-1.5 shadow-xl shadow-slate-950/60"
+        >
+          {SOURCE_KIND_OPTIONS.map((option) => (
+            <label
+              key={option.value}
+              className="flex cursor-pointer select-none items-center gap-2 rounded px-2 py-1.5 text-sm text-slate-300 transition hover:bg-slate-800"
+            >
+              <input
+                type="checkbox"
+                checked={values.includes(option.value)}
+                onChange={() => toggle(option.value)}
+                aria-label={option.label}
+                className="h-4 w-4 rounded border-slate-600 bg-slate-800 accent-sky-500"
+              />
+              {option.label}
+            </label>
+          ))}
+          <button
+            type="button"
+            onClick={() => {
+              onChange([]);
+              setOpen(false);
+            }}
+            className="mt-1 block w-full rounded px-2 py-1.5 text-left text-xs font-medium text-slate-400 transition hover:bg-slate-800 hover:text-slate-200"
+          >
+            All sources
+          </button>
+        </div>
+      ) : null}
+    </div>
+  );
 }
 
 export function FilterBar(props: FilterBarProps) {
@@ -200,20 +340,29 @@ export function FilterBar(props: FilterBarProps) {
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
         <div>
           <FieldLabel>Source</FieldLabel>
-          <select
-            value={values.sourceId ?? ""}
-            onChange={change("sourceId", props, (e) =>
-              e.target.value === "" ? null : Number(e.target.value),
-            )}
+          <SourceKindSelect
+            values={values.sourceKinds}
             disabled={disabled}
-            aria-label="Filter by source"
-            title="Source filter applies to browse mode only"
+            onChange={(sourceKinds) =>
+              props.onChange({ ...props.values, sourceKinds })
+            }
+          />
+        </div>
+
+        <div>
+          <FieldLabel>Province</FieldLabel>
+          <select
+            value={values.province}
+            onChange={change("province", props, (e) => e.target.value)}
+            disabled={disabled}
+            aria-label="Filter by province"
+            title="Province filter applies to browse mode only"
             className={FIELD_CLASS}
           >
-            <option value="">All sources</option>
-            {sources.map((source) => (
-              <option key={source.id} value={source.id}>
-                {source.name}
+            <option value="">All provinces</option>
+            {withSelected(provinces, values.province).map((province) => (
+              <option key={province} value={province}>
+                {facetLabel(province)}
               </option>
             ))}
           </select>
@@ -221,18 +370,31 @@ export function FilterBar(props: FilterBarProps) {
 
         <div>
           <FieldLabel>City</FieldLabel>
-          <select
+          <SearchableSelect
+            label="Filter by city"
             value={values.location}
-            onChange={change("location", props, (e) => e.target.value)}
+            options={withSelected(locations, values.location)}
+            allLabel="All cities"
             disabled={disabled}
-            aria-label="Filter by city"
-            title="City filter applies to browse mode only"
+            onChange={(location) =>
+              props.onChange({ ...props.values, location })
+            }
+          />
+        </div>
+
+        <div>
+          <FieldLabel>Industry</FieldLabel>
+          <select
+            value={values.sector}
+            onChange={change("sector", props, (e) => e.target.value)}
+            disabled={disabled}
+            aria-label="Filter by industry"
             className={FIELD_CLASS}
           >
-            <option value="">All cities</option>
-            {locations.map((location) => (
-              <option key={location} value={location}>
-                {location}
+            <option value="">All industries</option>
+            {withSelected(sectors, values.sector).map((sector) => (
+              <option key={sector} value={sector}>
+                {facetLabel(sector)}
               </option>
             ))}
           </select>
@@ -249,7 +411,7 @@ export function FilterBar(props: FilterBarProps) {
             className={FIELD_CLASS}
           >
             <option value="">All categories</option>
-            {categories.map((category) => (
+            {withSelected(categories, values.category).map((category) => (
               <option key={category} value={category}>
                 {category}
               </option>
@@ -258,37 +420,21 @@ export function FilterBar(props: FilterBarProps) {
         </div>
 
         <div>
-          <FieldLabel>Province</FieldLabel>
+          <FieldLabel>Portal</FieldLabel>
           <select
-            value={values.province}
-            onChange={change("province", props, (e) => e.target.value)}
+            value={values.sourceId ?? ""}
+            onChange={change("sourceId", props, (e) =>
+              e.target.value === "" ? null : Number(e.target.value),
+            )}
             disabled={disabled}
-            aria-label="Filter by province"
-            title="Province filter applies to browse mode only"
+            aria-label="Filter by portal"
+            title="Narrow to one portal (browse mode only)"
             className={FIELD_CLASS}
           >
-            <option value="">All provinces</option>
-            {provinces.map((province) => (
-              <option key={province} value={province}>
-                {facetLabel(province)}
-              </option>
-            ))}
-          </select>
-        </div>
-
-        <div>
-          <FieldLabel>Industry</FieldLabel>
-          <select
-            value={values.sector}
-            onChange={change("sector", props, (e) => e.target.value)}
-            disabled={disabled}
-            aria-label="Filter by industry"
-            className={FIELD_CLASS}
-          >
-            <option value="">All industries</option>
-            {sectors.map((sector) => (
-              <option key={sector} value={sector}>
-                {facetLabel(sector)}
+            <option value="">All portals</option>
+            {sources.map((source) => (
+              <option key={source.id} value={source.id}>
+                {source.name}
               </option>
             ))}
           </select>
@@ -304,7 +450,7 @@ export function FilterBar(props: FilterBarProps) {
             className={FIELD_CLASS}
           >
             <option value="">All departments</option>
-            {departments.map((department) => (
+            {withSelected(departments, values.department).map((department) => (
               <option key={department} value={department}>
                 {facetLabel(department)}
               </option>
@@ -323,7 +469,7 @@ export function FilterBar(props: FilterBarProps) {
             className={FIELD_CLASS}
           >
             <option value="">All types</option>
-            {procurementTypes.map((procurementType) => (
+            {withSelected(procurementTypes, values.procurementType).map((procurementType) => (
               <option key={procurementType} value={procurementType}>
                 {procurementType}
               </option>

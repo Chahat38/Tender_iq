@@ -1016,6 +1016,7 @@ class PostgresStorage:
         limit: int = 20,
         offset: int = 0,
         source_id: int | None = None,
+        source_ids: list[int] | None = None,
         deadline_before: Any = None,
         deadline_after: Any = None,
         location: str | None = None,
@@ -1049,6 +1050,7 @@ class PostgresStorage:
 
         clause, params = self._opportunity_filter_params(
             source_id=source_id,
+            source_ids=source_ids,
             deadline_before=deadline_before,
             deadline_after=deadline_after,
             location=location,
@@ -1086,6 +1088,7 @@ class PostgresStorage:
     def count_opportunities(
         self,
         source_id: int | None = None,
+        source_ids: list[int] | None = None,
         deadline_before: Any = None,
         deadline_after: Any = None,
         location: str | None = None,
@@ -1106,6 +1109,7 @@ class PostgresStorage:
         """
         clause, params = self._opportunity_filter_params(
             source_id=source_id,
+            source_ids=source_ids,
             deadline_before=deadline_before,
             deadline_after=deadline_after,
             location=location,
@@ -1141,6 +1145,7 @@ class PostgresStorage:
         procurement_type: str | None = None,
         sector: str | None = None,
         department: str | None = None,
+        source_ids: list[int] | None = None,
     ) -> tuple[str, list[Any]]:
         """Build the WHERE clause shared by the two read methods.
 
@@ -1171,6 +1176,16 @@ class PostgresStorage:
             else:
                 where.append("o.source_id = %s")
                 params.append(source_id)
+        if source_ids is not None:
+            # Government/Corporate split, mirroring storage.py: an empty
+            # list means "no source matches", never "ignore the filter".
+            ids = [int(value) for value in source_ids]
+            if ids:
+                placeholders = ", ".join("%s" for _ in ids)
+                where.append(f"o.source_id IN ({placeholders})")
+                params.extend(ids)
+            else:
+                where.append("FALSE")
         if location:
             # Mirror storage.py: scraped locations are free text and some
             # sources leave the column empty, so match the stated text too.

@@ -38,6 +38,16 @@ export class ApiError extends Error {
   }
 }
 
+/**
+ * True when a request was cancelled (the effect unmounted or its inputs
+ * changed) rather than failing. Cancellations are routine in React's dev
+ * double-mount and on every filter change, so callers must not surface
+ * them as API errors.
+ */
+export function isAbortError(error: unknown): boolean {
+  return error instanceof Error && error.name === "AbortError";
+}
+
 async function requestJson<T>(path: string, signal?: AbortSignal): Promise<T> {
   const response = await fetch(`${API_BASE}${path}`, {
     headers: { Accept: "application/json" },
@@ -95,11 +105,17 @@ function queryString(
   return encoded ? `?${encoded}` : "";
 }
 
+/** Tender source family shown in the Source filter. */
+export type SourceKind = "government" | "corporate";
+
 export interface ListParams {
   limit?: number;
   offset?: number;
   /** Restrict to one registered source (browse mode only). */
   sourceId?: number;
+  /** Restrict to source kinds: government portals and/or corporate
+   * (state-owned enterprises publishing their own tenders). */
+  sourceKinds?: SourceKind[];
   /** Keep rows whose location contains this text (city filter). */
   location?: string;
   /** Exact stored category, case-insensitive (facet value). */
@@ -131,8 +147,7 @@ export function listOpportunities(
   params: ListParams = {},
   signal?: AbortSignal,
 ): Promise<OpportunityPage> {
-  return requestJson<OpportunityPage>(
-    `/opportunities${queryString({
+  const query = queryString({
       limit: params.limit,
       offset: params.offset,
       source_id: params.sourceId,
@@ -148,7 +163,14 @@ export function listOpportunities(
       deadline_after: params.deadlineAfter,
       deadline_from: params.deadlineFrom,
       deadline_to: params.deadlineTo,
-    })}`,
+    });
+  // Repeated params: source_kind=government&source_kind=corporate.
+  const kinds = (params.sourceKinds ?? [])
+    .map((kind) => `source_kind=${encodeURIComponent(kind)}`)
+    .join("&");
+  const search = [query.replace(/^\?/, ""), kinds].filter(Boolean).join("&");
+  return requestJson<OpportunityPage>(
+    `/opportunities${search ? `?${search}` : ""}`,
     signal,
   );
 }
@@ -216,8 +238,14 @@ export function listCoverage(signal?: AbortSignal): Promise<SourceCoverage[]> {
  * Pakistani city list, so every city is selectable even before a source
  * has supplied a location string.
  */
-export function listLocations(signal?: AbortSignal): Promise<string[]> {
-  return requestJson<string[]>("/locations?include_all=true", signal);
+export function listLocations(
+  province?: string,
+  signal?: AbortSignal,
+): Promise<string[]> {
+  return requestJson<string[]>(
+    `/locations${queryString({ include_all: true, province })}`,
+    signal,
+  );
 }
 
 /** Distinct stored categories (category filter facet). */
@@ -246,6 +274,46 @@ export function listDepartments(signal?: AbortSignal): Promise<string[]> {
 /** Distinct stored procurement types (procurement_type filter facet). */
 export function listProcurementTypes(signal?: AbortSignal): Promise<string[]> {
   return requestJson<string[]>("/procurement_types", signal);
+}
+
+/**
+ * Filter options that still have matches under the other active filters.
+ * Each list leaves its own filter out, so the current choice stays
+ * selectable while every other dropdown only offers values that can
+ * combine with it.
+ */
+export interface Facets {
+  provinces: string[];
+  locations: string[];
+  categories: string[];
+  sectors: string[];
+  departments: string[];
+  procurement_types: string[];
+  source_ids: number[];
+}
+
+/** Facet options for the given filters (GET /facets). */
+export function getFacets(
+  params: ListParams = {},
+  signal?: AbortSignal,
+): Promise<Facets> {
+  const query = queryString({
+    source_id: params.sourceId,
+    location: params.location,
+    category: params.category,
+    province: params.province,
+    sector: params.sector,
+    department: params.department,
+    procurement_type: params.procurementType,
+    deadline_from: params.deadlineFrom,
+    deadline_to: params.deadlineTo,
+    include_duplicates: params.includeDuplicates,
+  });
+  const kinds = (params.sourceKinds ?? [])
+    .map((kind) => `source_kind=${encodeURIComponent(kind)}`)
+    .join("&");
+  const search = [query.replace(/^\?/, ""), kinds].filter(Boolean).join("&");
+  return requestJson<Facets>(`/facets${search ? `?${search}` : ""}`, signal);
 }
 
 /** Deterministic analysis (+ LLM summary when a key is configured). */

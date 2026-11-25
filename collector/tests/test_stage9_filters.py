@@ -343,3 +343,104 @@ def test_source_filter_resolves_duplicate_groups(storage: Storage) -> None:
     assert storage.count_opportunities(source_id=second) == 1
     listed = storage.list_opportunities(source_id=second)
     assert [row["external_id"] for row in listed] == ["101"]
+
+
+def test_source_ids_filter(storage: Storage) -> None:
+    """Several sources at once (the Government/Corporate filter)."""
+    first = storage.get_or_create_source("First Source", "first")
+    second = storage.get_or_create_source("Second Source", "second")
+    storage.upsert_opportunity(_opp(external_id="401"), first)
+    storage.upsert_opportunity(_opp(external_id="402"), second)
+
+    assert storage.count_opportunities(source_ids=[first]) == 1
+    assert [
+        row["external_id"]
+        for row in storage.list_opportunities(source_ids=[first])
+    ] == ["401"]
+    assert {
+        row["external_id"]
+        for row in storage.list_opportunities(source_ids=[first, second])
+    } == {"401", "402"}
+    # An empty list means "no source matches", never "ignore the filter".
+    assert storage.count_opportunities(source_ids=[]) == 0
+
+
+class TestApiSourceKindFilter:
+    """Government/Corporate families resolved from the source registry."""
+
+    @pytest.fixture()
+    def client(self, tmp_path):
+        from fastapi.testclient import TestClient
+
+        import api
+
+        db_path = tmp_path / "kinds.db"
+        storage = Storage(db_path)
+        government = storage.get_or_create_source("PPRA EPMS", "PPRAEpmsAdapter")
+        corporate = storage.get_or_create_source("PIA Tenders", "PiaAdapter")
+        storage.upsert_opportunity(_opp(external_id="301"), government)
+        storage.upsert_opportunity(_opp(external_id="302"), corporate)
+        storage.close()
+        app = api.create_app(db_path)
+        with TestClient(app) as test_client:
+            yield test_client
+
+    def test_government_family(self, client) -> None:
+        body = client.get(
+            "/opportunities", params={"source_kind": "government"}
+        ).json()
+        assert [row["external_id"] for row in body["opportunities"]] == ["301"]
+        assert body["total"] == 1
+
+    def test_corporate_family(self, client) -> None:
+        body = client.get(
+            "/opportunities", params={"source_kind": "corporate"}
+        ).json()
+        assert [row["external_id"] for row in body["opportunities"]] == ["302"]
+
+    def test_both_families_return_every_row(self, client) -> None:
+        body = client.get(
+            "/opportunities",
+            params=[("source_kind", "government"), ("source_kind", "corporate")],
+        ).json()
+        assert {row["external_id"] for row in body["opportunities"]} == {
+            "301",
+            "302",
+        }
+
+    def test_unknown_family_is_rejected(self, client) -> None:
+        response = client.get(
+            "/opportunities", params={"source_kind": "military"}
+        )
+        assert response.status_code == 422
+
+    def test_post_body_accepts_source_kind(self, client) -> None:
+        body = client.post(
+            "/opportunities/query", json={"source_kind": ["corporate"]}
+        ).json()
+        assert [row["external_id"] for row in body["opportunities"]] == ["302"]
+
+    def test_locations_follow_the_province(self, client) -> None:
+        sindh = client.get(
+            "/locations", params={"include_all": "true", "province": "Sindh"}
+        ).json()
+        punjab = client.get(
+            "/locations", params={"include_all": "true", "province": "Punjab"}
+        ).json()
+        assert "Karachi" in sindh
+        assert "Lahore" not in sindh
+        assert "Lahore" in punjab
+        assert "Karachi" not in punjab
+        # Province aliases resolve (portals write "KPK").
+        kpk = client.get(
+            "/locations", params={"include_all": "true", "province": "KPK"}
+        ).json()
+        assert "Peshawar" in kpk
+
+    def test_unknown_province_offers_no_cities(self, client) -> None:
+        assert (
+            client.get(
+                "/locations", params={"include_all": "true", "province": "Atlantis"}
+            ).json()
+            == []
+        )

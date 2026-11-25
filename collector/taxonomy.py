@@ -464,6 +464,25 @@ def all_cities() -> list[str]:
     return sorted(CITY_PROVINCE, key=str.lower)
 
 
+def cities_for_province(province: str | None) -> list[str]:
+    """Known cities in ``province``, alphabetically; every city when None.
+
+    The province is normalized first, so the aliases portals use ("KPK",
+    "AJK") resolve to the canonical name. An unrecognised province
+    returns an empty list rather than the whole country, so the city
+    dropdown never offers a city the province filter would hide.
+    """
+    if not province:
+        return all_cities()
+    canonical = normalize_province(province)
+    if canonical is None:
+        return []
+    return sorted(
+        (city for city, home in CITY_PROVINCE.items() if home == canonical),
+        key=str.lower,
+    )
+
+
 def normalize_province(value: str | None) -> str | None:
     """Map a stored/alias province spelling onto its canonical name.
 

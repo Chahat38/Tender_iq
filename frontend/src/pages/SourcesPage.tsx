@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { listCoverage, listSources } from "../api";
+import { ApiError, isAbortError, listCoverage, listSources } from "../api";
 import type { Source, SourceCoverage } from "../types";
 import { formatDateTime } from "../utils/format";
 
@@ -138,7 +138,12 @@ export function SourcesPage() {
         setSources(nextSources);
         setCoverage(nextCoverage);
       })
-      .catch((err: unknown) => setError(String(err)));
+      .catch((err: unknown) => {
+        if (controller.signal.aborted || isAbortError(err)) {
+          return;
+        }
+        setError(err instanceof ApiError ? err.detail : String(err));
+      });
     return () => controller.abort();
   }, []);
 

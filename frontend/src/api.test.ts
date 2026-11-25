@@ -7,8 +7,10 @@ import {
   aiGenerateRfp,
   ApiError,
   getDuplicates,
+  getFacets,
   getNotifications,
   getOpportunity,
+  listLocations,
   listOpportunities,
   listProcurementTypes,
   listSources,
@@ -86,6 +88,39 @@ describe("listOpportunities", () => {
   });
 });
 
+describe("listLocations", () => {
+  it("scopes the city facet to one province", async () => {
+    fetchMock.mockResolvedValue(jsonResponse(["Karachi"]));
+    await listLocations("Sindh");
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/locations?include_all=true&province=Sindh",
+      expect.anything(),
+    );
+  });
+
+  it("asks for every city when no province is selected", async () => {
+    fetchMock.mockResolvedValue(jsonResponse(["Karachi"]));
+    await listLocations();
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/locations?include_all=true",
+      expect.anything(),
+    );
+  });
+});
+
+describe("source families", () => {
+  it("repeats source_kind for both families", async () => {
+    fetchMock.mockResolvedValue(
+      jsonResponse({ total: 0, limit: 20, offset: 0, opportunities: [] }),
+    );
+    await listOpportunities({ sourceKinds: ["government", "corporate"] });
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/opportunities?source_kind=government&source_kind=corporate",
+      expect.anything(),
+    );
+  });
+});
+
 describe("searchOpportunities", () => {
   it("encodes the query for GET /search", async () => {
     fetchMock.mockResolvedValue(
@@ -138,6 +173,31 @@ describe("getNotifications", () => {
     await getNotifications(7, 20);
     expect(fetchMock).toHaveBeenCalledWith(
       "/api/notifications?window_days=7&limit=20",
+      expect.anything(),
+    );
+  });
+});
+
+describe("getFacets", () => {
+  it("sends the active filters so the options follow them", async () => {
+    fetchMock.mockResolvedValue(
+      jsonResponse({
+        provinces: [],
+        locations: [],
+        categories: [],
+        sectors: [],
+        departments: [],
+        procurement_types: [],
+        source_ids: [],
+      }),
+    );
+    await getFacets({
+      province: "Sindh",
+      sector: "it & telecom",
+      sourceKinds: ["government"],
+    });
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/facets?province=Sindh&sector=it+%26+telecom&source_kind=government",
       expect.anything(),
     );
   });

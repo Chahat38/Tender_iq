@@ -57,7 +57,11 @@ export function OpportunityDetail({ id, onBack }: OpportunityDetailProps) {
       });
     getDuplicates(id, controller.signal)
       .then(setDuplicates)
-      .catch(() => setDuplicates([]));
+      .catch(() => {
+        if (!controller.signal.aborted) {
+          setDuplicates([]);
+        }
+      });
     return () => controller.abort();
   }, [id]);
 

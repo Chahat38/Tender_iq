@@ -1159,6 +1159,7 @@ class Storage:
     def count_opportunities(
         self,
         source_id: int | None = None,
+        source_ids: list[int] | None = None,
         deadline_before: datetime | None = None,
         deadline_after: Any = NULL_DEADLINE_FILTER,
         location: str | None = None,
@@ -1182,6 +1183,7 @@ class Storage:
         """
         clause, params = self._opportunity_filter_clause(
             source_id=source_id,
+            source_ids=source_ids,
             deadline_before=deadline_before,
             deadline_after=deadline_after,
             location=location,
@@ -1311,6 +1313,7 @@ class Storage:
         limit: int = 20,
         offset: int = 0,
         source_id: int | None = None,
+        source_ids: list[int] | None = None,
         deadline_before: datetime | None = None,
         deadline_after: Any = NULL_DEADLINE_FILTER,
         location: str | None = None,
@@ -1378,6 +1381,7 @@ class Storage:
 
         clause, params = self._opportunity_filter_clause(
             source_id=source_id,
+            source_ids=source_ids,
             deadline_before=deadline_before,
             deadline_after=deadline_after,
             location=location,
@@ -1421,6 +1425,7 @@ class Storage:
         sector: str | None = None,
         department: str | None = None,
         exclude_expired: datetime | None = None,
+        source_ids: list[int] | None = None,
     ) -> tuple[str, list[Any]]:
         """Build the WHERE clause shared by list_opportunities and
         count_opportunities so both always filter identically.
@@ -1455,6 +1460,17 @@ class Storage:
             else:
                 where.append("source_id = ?")
                 params.append(source_id)
+        if source_ids is not None:
+            # Government/Corporate split: the API resolves the requested
+            # kinds to source ids from the registry. An empty list means
+            # "no source matches", never "ignore the filter".
+            ids = [int(value) for value in source_ids]
+            if ids:
+                placeholders = ", ".join("?" for _ in ids)
+                where.append(f"source_id IN ({placeholders})")
+                params.extend(ids)
+            else:
+                where.append("0 = 1")
         if deadline_from:
             # Date-only inclusive lower bound on the deadline's local date.
             where.append("deadline IS NOT NULL AND substr(deadline, 1, 10) >= ?")
@@ -1682,6 +1698,106 @@ class Storage:
             "ORDER BY n DESC, label"
         ).fetchall()
         return [str(row["label"]) for row in rows]
+
+    def list_facets(
+        self,
+        *,
+        source_id: int | None = None,
+        source_ids: list[int] | None = None,
+        location: str | None = None,
+        category: str | None = None,
+        province: str | None = None,
+        sector: str | None = None,
+        department: str | None = None,
+        procurement_type: str | None = None,
+        deadline_from: str | None = None,
+        deadline_to: str | None = None,
+        primary_only: bool = True,
+        exclude_expired: datetime | None = None,
+    ) -> dict[str, list[Any]]:
+        """Filter options that still have matches under the other filters.
+
+        Each facet is computed with its own filter left out, so the
+        dropdown keeps the user's current choice while every other
+        dropdown only offers values that can combine with it. This keeps
+        multi-filter browsing honest: any option the UI shows leads to at
+        least one tender. Values are lowercased (like the other facet
+        helpers) except procurement types, which keep their stored label
+        and are ordered most common first.
+        """
+        filters: dict[str, Any] = {
+            "source_id": source_id,
+            "source_ids": source_ids,
+            "location": location,
+            "category": category,
+            "province": province,
+            "sector": sector,
+            "department": department,
+            "procurement_type": procurement_type,
+            "deadline_before": None,
+            "deadline_after": NULL_DEADLINE_FILTER,
+            "deadline_from": deadline_from,
+            "deadline_to": deadline_to,
+            "primary_only": primary_only,
+            "exclude_expired": exclude_expired,
+        }
+        columns = {
+            "province": "province",
+            "location": "location",
+            "category": "category",
+            "sector": "sector",
+            "department": "department",
+            "procurement_type": "procurement_type",
+        }
+        # Response keys are plural; each value's own filter is left out.
+        facet_keys = {
+            "province": "provinces",
+            "location": "locations",
+            "category": "categories",
+            "sector": "sectors",
+            "department": "departments",
+            "procurement_type": "procurement_types",
+        }
+        facets: dict[str, list[Any]] = {}
+        for field, column in columns.items():
+            clause, params = self._opportunity_filter_clause(
+                **dict(filters, **{field: None})
+            )
+            not_empty = f"{column} IS NOT NULL AND {column} <> ''"
+            where = f"{clause} AND {not_empty}" if clause else f" WHERE {not_empty}"
+            if field == "procurement_type":
+                rows = self.conn.execute(
+                    f"SELECT {column} AS label, COUNT(*) AS n FROM opportunities"
+                    f"{where} GROUP BY lower({column}) ORDER BY n DESC, label",
+                    params,
+                ).fetchall()
+                facets[facet_keys[field]] = [str(row["label"]) for row in rows]
+            else:
+                rows = self.conn.execute(
+                    f"SELECT DISTINCT lower({column}) AS value FROM opportunities"
+                    f"{where} ORDER BY value",
+                    params,
+                ).fetchall()
+                facets[facet_keys[field]] = [str(row["value"]) for row in rows]
+        clause, params = self._opportunity_filter_clause(
+            **dict(filters, source_id=None)
+        )
+        source_where = (
+            f"{clause} AND source_id IS NOT NULL"
+            if clause
+            else " WHERE source_id IS NOT NULL"
+        )
+        rows = self.conn.execute(
+            f"SELECT DISTINCT source_id FROM opportunities{source_where} "
+            "ORDER BY source_id",
+            params,
+        ).fetchall()
+        facets["source_ids"] = [
+            int(row["source_id"])
+            for row in rows
+            if row["source_id"] is not None
+        ]
+        return facets
 
     def list_duplicates(self, opportunity_id: int) -> list[dict[str, Any]]:
         """Sibling rows in the same duplicate group, newest first.

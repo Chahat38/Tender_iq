@@ -832,3 +832,44 @@ class TestMatchesEndpoint:
             "/matches", params={"user_id": "u1", "min_score": 40}
         )
         assert response.json() == []
+
+
+class TestFacets:
+    """Facet options follow every other active filter."""
+
+    def test_facets_keep_only_combinations_with_matches(self, harness) -> None:
+        harness.add(
+            external_id="f1",
+            province="Punjab",
+            category="Health",
+            sector="IT & Telecom",
+            procurement_type="goods",
+        )
+        harness.add(
+            external_id="f2",
+            province="Sindh",
+            category="Education",
+            sector="Water & Sanitation",
+            procurement_type="works",
+        )
+        body = harness.client.get("/facets", params={"province": "Punjab"}).json()
+        assert body["sectors"] == ["it & telecom"]
+        assert body["categories"] == ["health"]
+        assert body["procurement_types"] == ["goods"]
+        assert body["locations"] == ["Lahore"]
+        # A facet ignores its own filter, so the current choice and the
+        # alternatives stay selectable.
+        assert body["provinces"] == ["Punjab", "Sindh"]
+        assert body["source_ids"] == [harness.storage.list_sources()[0]["id"]]
+
+    def test_no_matching_rows_answer_empty_lists(self, harness) -> None:
+        harness.add(external_id="f3", province="Punjab", category="Health")
+        body = harness.client.get(
+            "/facets", params={"province": "Punjab", "category": "Education"}
+        ).json()
+        assert body["sectors"] == []
+        assert body["procurement_types"] == []
+        assert body["source_ids"] == []
+        assert body["provinces"] == []
+        # The category facet still lists its own values under the province.
+        assert body["categories"] == ["health"]
